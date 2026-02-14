@@ -149,6 +149,114 @@ if ($enteredIdentifier !== '') {
         .login-footer { text-align: center; margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid #f1f5f9; }
         .login-footer a { color: var(--primary); font-weight: 600; text-decoration: none; }
         .login-footer a:hover { text-decoration: underline; }
+        
+        /* Anti-Brute Force Lockout Styles */
+        .lockout-alert { 
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); 
+            border: 2px solid #dc2626; 
+            border-radius: 14px; 
+            padding: 1.5rem; 
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 20px rgba(220, 38, 38, 0.2);
+        }
+        .lockout-alert .icon { 
+            width: 56px; 
+            height: 56px; 
+            background: #dc2626; 
+            border-radius: 50%; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            margin: 0 auto 1rem;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .lockout-alert .icon i { 
+            color: #fff; 
+            font-size: 28px; 
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+        }
+        .lockout-alert h4 { 
+            color: #991b1b; 
+            font-size: 1.15rem; 
+            font-weight: 700; 
+            margin: 0 0 0.5rem; 
+            text-align: center;
+        }
+        .lockout-alert p { 
+            color: #7f1d1d; 
+            margin: 0 0 1.25rem; 
+            text-align: center;
+            font-size: 0.95rem;
+        }
+        .countdown-display { 
+            background: #fff; 
+            border-radius: 12px; 
+            padding: 1rem 1.25rem; 
+            text-align: center; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+        }
+        .countdown-display .time { 
+            font-size: 2rem; 
+            font-weight: 700; 
+            color: #dc2626; 
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 1px;
+            font-family: 'Courier New', monospace;
+        }
+        .countdown-display .label { 
+            font-size: 0.75rem; 
+            color: #991b1b; 
+            text-transform: uppercase; 
+            font-weight: 600;
+            margin-top: 0.5rem;
+            letter-spacing: 0.5px;
+        }
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(254, 202, 202, 0.5);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #dc2626, #ef4444);
+            border-radius: 4px;
+            transition: width 1s linear;
+            box-shadow: 0 0 8px rgba(220, 38, 38, 0.4);
+        }
+        .attempt-warning {
+            background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+            border: 2px solid #f59e0b;
+            border-radius: 12px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .attempt-warning i {
+            color: #f59e0b;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+        .attempt-warning .content {
+            flex: 1;
+        }
+        .attempt-warning .count {
+            font-weight: 700;
+            color: #92400e;
+            font-size: 1rem;
+        }
+        .attempt-warning .remaining {
+            font-size: 0.85rem;
+            color: #92400e;
+            margin-top: 0.25rem;
+        }
     </style>
 </head>
 <body>
@@ -183,25 +291,55 @@ if ($enteredIdentifier !== '') {
                         <a href="<?= BASE_URL ?>/auth/login.php">Switch</a>
                     </div>
 
+                    <?php if ($lockedInfo['locked']): ?>
+                        <!-- Lockout Alert with Live Timer -->
+                        <div class="lockout-alert">
+                            <div class="icon">
+                                <i class="bi bi-shield-lock-fill"></i>
+                            </div>
+                            <h4>Account Temporarily Locked</h4>
+                            <p>Too many failed login attempts detected. Please wait before trying again.</p>
+                            <div class="countdown-display">
+                                <div class="time" id="lockCountdown">
+                                    <?= LoginSecurity::formatRemaining($lockedInfo['remaining']) ?>
+                                </div>
+                                <div class="label">Time Remaining</div>
+                            </div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar-fill" id="progressBar" style="width: 100%;"></div>
+                            </div>
+                        </div>
+                    <?php elseif (!empty($enteredIdentifier) && $attemptsInfo['attempts'] > 0): ?>
+                        <!-- Attempt Warning -->
+                        <div class="attempt-warning">
+                            <i class="bi bi-exclamation-triangle-fill"></i>
+                            <div class="content">
+                                <div class="count">
+                                    <?= intval($attemptsInfo['attempts']) ?> of <?= LoginSecurity::MAX_ATTEMPTS ?> failed attempts
+                                </div>
+                                <div class="remaining">
+                                    <?php 
+                                    $remaining = LoginSecurity::MAX_ATTEMPTS - intval($attemptsInfo['attempts']);
+                                    echo $remaining . ' attempt' . ($remaining != 1 ? 's' : '') . ' remaining before 1-minute lockout';
+                                    ?>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
                     <form method="post" action="<?= BASE_URL ?>/auth/login.php">
                         <input type="hidden" name="login_as" value="<?= htmlspecialchars($role) ?>">
                         <div class="mb-3">
                             <label class="form-label">Username or Email</label>
-                            <input type="text" name="username" class="form-control" value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" required autofocus placeholder="Enter username or email" <?= ($lockedInfo['locked'] ? 'disabled' : '') ?> >
-                            <?php if (!empty($enteredIdentifier)): ?>
-                                <div class="form-text mt-1">
-                                    Failed attempts: <?= intval($attemptsInfo['attempts']) ?> of <?= LoginSecurity::MAX_ATTEMPTS ?>
-                                </div>
-                                <?php if ($lockedInfo['locked']): ?>
-                                    <div class="text-danger small mt-1">Account locked. Please try again in <span id="lockCountdown"><?= LoginSecurity::formatRemaining($lockedInfo['remaining']) ?></span></div>
-                                <?php endif; ?>
-                            <?php endif; ?>
+                            <input type="text" name="username" class="form-control" value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" required autofocus placeholder="Enter username or email" <?= ($lockedInfo['locked'] ? 'disabled' : '') ?>>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Password</label>
-                            <input type="password" name="password" class="form-control" required placeholder="Enter password" <?= ($lockedInfo['locked'] ? 'disabled' : '') ?> >
+                            <input type="password" name="password" class="form-control" required placeholder="Enter password" <?= ($lockedInfo['locked'] ? 'disabled' : '') ?>>
                         </div>
-                        <button type="submit" class="btn btn-submit" <?= ($lockedInfo['locked'] ? 'disabled' : '') ?> >Log in</button>
+                        <button type="submit" class="btn btn-submit" <?= ($lockedInfo['locked'] ? 'disabled' : '') ?>>
+                            <?= $lockedInfo['locked'] ? '<i class="bi bi-lock-fill"></i> Account Locked' : 'Log in' ?>
+                        </button>
                     </form>
 
                     <?php if ($role === 'user'): ?>
@@ -248,20 +386,50 @@ if ($enteredIdentifier !== '') {
     </script>
     <?php if (!empty($enteredIdentifier) && $lockedInfo['locked']): ?>
     <script>
-    // Countdown for lock remaining time
+    // Enhanced live countdown timer with progress bar (1-minute lockout)
     (function(){
-        var remaining = <?= intval($lockedInfo['remaining']) ?>;
-        var el = document.getElementById('lockCountdown');
-        if (!el) return;
-        function tick(){
-            if (remaining <= 0) { el.textContent = '0 minutes 00 seconds'; location.reload(); return; }
-            var m = Math.floor(remaining / 60);
-            var s = remaining % 60;
-            el.textContent = m + ' minutes ' + String(s).padStart(2,'0') + ' seconds';
-            remaining--;
-            setTimeout(tick, 1000);
+        const totalSeconds = <?= intval($lockedInfo['remaining']) ?>;
+        let remaining = totalSeconds;
+        const timeEl = document.getElementById('lockCountdown');
+        const progressBar = document.getElementById('progressBar');
+        
+        if (!timeEl) return;
+        
+        function formatTime(seconds) {
+            if (seconds <= 0) return '0:00';
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return m + ':' + String(s).padStart(2, '0');
         }
-        tick();
+        
+        function updateDisplay() {
+            if (remaining <= 0) {
+                timeEl.textContent = '0:00';
+                if (progressBar) progressBar.style.width = '0%';
+                
+                // Show reload message and auto-reload
+                timeEl.parentElement.querySelector('.label').textContent = 'RELOADING...';
+                setTimeout(() => {
+                    location.reload();
+                }, 500);
+                return;
+            }
+            
+            // Update countdown display
+            timeEl.textContent = formatTime(remaining);
+            
+            // Update progress bar (animate smoothly)
+            if (progressBar) {
+                const percentage = (remaining / totalSeconds) * 100;
+                progressBar.style.width = percentage + '%';
+            }
+            
+            remaining--;
+            setTimeout(updateDisplay, 1000);
+        }
+        
+        // Start the countdown
+        updateDisplay();
     })();
     </script>
     <?php endif; ?>

@@ -333,7 +333,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <div class="row g-2">
                                         <div class="col-md-6">
                                                     <label class="form-label">Phone <span class="text-danger">*</span></label>
-                                                    <input type="tel" inputmode="tel" pattern="^(\+63|63|0)9[0-9]{9}$" name="phone" id="phone" class="form-control" value="<?= htmlspecialchars($_POST['phone'] ?? '') ?>" maxlength="14" placeholder="09XXXXXXXXX or +639XXXXXXXXX" required>
+                                                    <input type="tel" inputmode="tel" pattern="^(\+63|63|0)9[0-9]{9}$" name="phone" id="phone" class="form-control" value="<?= htmlspecialchars($_POST['phone'] ?? '') ?>" maxlength="14" placeholder="09XXXXXXXXX" required>
                                                 </div>
                                         <div class="col-md-6">
                                             <label class="form-label">Username <span class="text-danger">*</span></label>

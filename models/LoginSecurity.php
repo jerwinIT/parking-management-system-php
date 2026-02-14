@@ -8,8 +8,8 @@ define('LOGINSEC_INCLUDED', true);
 class LoginSecurity {
     // lock after this many failed attempts
     const MAX_ATTEMPTS = 5;
-    // lock duration in seconds (2 minutes)
-    const LOCK_SECONDS = 120;
+    // lock duration in seconds (1 minute)
+    const LOCK_SECONDS = 60;
 
     private static function ensureTableExists() {
         $pdo = getDB();
