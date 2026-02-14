@@ -91,21 +91,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_vehicle'])) {
     } elseif ($vehicle_type === '') {
         $error = 'Please select a vehicle type.';
     } else {
-        // Validate owner name
-        if ($owner_name === '' || !preg_match('/^[a-zA-Z ]+$/', $owner_name)) {
-            $error = 'Owner name is required and can only contain letters and spaces.';
+        // Validate owner name - only letters and spaces, no special characters or numbers
+        if (empty($owner_name)) {
+            $error = 'Owner name is required.';
+        } elseif (!preg_match('/^[a-zA-Z ]+$/', $owner_name)) {
+            $error = 'Owner name can only contain letters and spaces. Special characters and numbers are not allowed.';
+        } elseif (strlen($owner_name) < 2) {
+            $error = 'Owner name must be at least 2 characters long.';
+        } elseif (strlen($owner_name) > 100) {
+            $error = 'Owner name is too long (maximum 100 characters).';
         }
-        // Validate phone (Philippine formats)
+        
+        // Validate phone (Philippine format: 09XXXXXXXXX)
         if (empty($error)) {
-            $clean_phone = preg_replace('/[^0-9+]/', '', $owner_phone);
-            if (!preg_match('/^(\+63|63|0)?9[0-9]{9}$/', $clean_phone)) {
-                $error = 'Owner phone must be a Philippine mobile number (e.g., 09171234567 or +639171234567).';
+            if (empty($owner_phone)) {
+                $error = 'Owner phone is required.';
+            } else {
+                $clean_phone = preg_replace('/[^0-9]/', '', $owner_phone);
+                if (!preg_match('/^09[0-9]{9}$/', $clean_phone)) {
+                    $error = 'Owner phone must be in format 09XXXXXXXXX (11 digits starting with 09).';
+                }
             }
         }
-        // Validate email contains at least one letter and basic format
+        
+        // Validate email - must contain letters and be valid format
         if (empty($error)) {
-            if ($owner_email === '' || !preg_match('/[a-zA-Z]/', $owner_email) || !filter_var($owner_email, FILTER_VALIDATE_EMAIL)) {
-                $error = 'Owner email is required and must be a valid email containing letters.';
+            if (empty($owner_email)) {
+                $error = 'Owner email is required.';
+            } elseif (!preg_match('/[a-zA-Z]/', $owner_email)) {
+                $error = 'Owner email must contain at least one letter.';
+            } elseif (!filter_var($owner_email, FILTER_VALIDATE_EMAIL)) {
+                $error = 'Owner email must be a valid email address.';
+            }
+        }
+        
+        // Validate model - no special characters except spaces, hyphens, and parentheses
+        if (empty($error) && !empty($model)) {
+            if (!preg_match('/^[a-zA-Z0-9 \-()]+$/', $model)) {
+                $error = 'Vehicle model can only contain letters, numbers, spaces, hyphens, and parentheses. Special characters are not allowed.';
+            } elseif (strlen($model) > 100) {
+                $error = 'Vehicle model is too long (maximum 100 characters).';
+            }
+        }
+        
+        // Validate year - must be positive number and reasonable range
+        if (empty($error) && !empty($year)) {
+            // Remove any non-numeric characters
+            if (!preg_match('/^[0-9]+$/', $year)) {
+                $error = 'Year must be a valid number without special characters.';
+            } else {
+                $year_num = (int)$year;
+                $current_year = (int)date('Y');
+                
+                if ($year_num < 0) {
+                    $error = 'Year cannot be negative.';
+                } elseif ($year_num < 1900) {
+                    $error = 'Year must be 1900 or later.';
+                } elseif ($year_num > $current_year) {
+                    $error = 'Year cannot be greater than the current year (' . $current_year . ').';
+                }
+            }
+        }
+        
+        // Validate color - only letters and spaces, no special characters or numbers
+        if (empty($error) && !empty($color)) {
+            if (!preg_match('/^[a-zA-Z ]+$/', $color)) {
+                $error = 'Vehicle color can only contain letters and spaces. Special characters and numbers are not allowed.';
+            } elseif (strlen($color) > 50) {
+                $error = 'Vehicle color is too long (maximum 50 characters).';
             }
         }
 
@@ -839,34 +892,34 @@ require dirname(__DIR__) . '/includes/header.php';
 // Plate examples and client-side regexes
 const PLATE_SCHEMAS = {
     '<?= PlateValidator::TYPE_PRIVATE ?>': {
-        example: 'ABC1234 (or ABC123)',
-        pattern: /^[A-HJ-NP-Z]{3}\s?[0-9]{3,4}$/i,
-        error: 'Private vehicle plates must be 3 letters and 3-4 numbers (e.g., ABC1234)'
+        example: 'ABC-1234 or ABC1234',
+        pattern: /^[A-HJ-NP-Z]{3}[-\s]?[0-9]{3,4}$/i,
+        error: 'Private vehicle plates must be 3 letters and 3-4 numbers (e.g., ABC-1234 or ABC1234)'
     },
     '<?= PlateValidator::TYPE_MOTORCYCLE ?>': {
-        example: 'MC12345 or TR-5678',
+        example: 'MC-12345 or MC12345',
         pattern: /^[A-Z]{2}[-\s]?[0-9]{4,5}$/i,
-        error: 'Motorcycle plates must be 2 letters and 4-5 numbers (e.g., MC12345)'
+        error: 'Motorcycle plates must be 2 letters and 4-5 numbers (e.g., MC-12345 or MC12345)'
     },
     '<?= PlateValidator::TYPE_GOVERNMENT ?>': {
-        example: 'SEN123 or GOV1234',
-        pattern: /^[A-Z]{2,3}\s?[0-9]{1,4}$/i,
-        error: 'Government vehicle plates must be 2-3 letters and 1-4 numbers'
+        example: 'SEN-123 or GOV1234',
+        pattern: /^[A-Z]{2,3}[-\s]?[0-9]{1,4}$/i,
+        error: 'Government vehicle plates must be 2-3 letters and 1-4 numbers (e.g., SEN-123)'
     },
     '<?= PlateValidator::TYPE_FOR_HIRE ?>': {
-        example: 'TXI1234',
-        pattern: /^[A-HJ-NP-Z]{3}\s?[0-9]{3,4}$/i,
-        error: 'For-hire vehicle plates must be 3 letters and 3-4 numbers'
+        example: 'TXI-1234 or TXI1234',
+        pattern: /^[A-HJ-NP-Z]{3}[-\s]?[0-9]{3,4}$/i,
+        error: 'For-hire vehicle plates must be 3 letters and 3-4 numbers (e.g., TXI-1234)'
     },
     '<?= PlateValidator::TYPE_ELECTRIC ?>': {
-        example: 'EABC1234',
-        pattern: /^E\s?[A-HJ-NP-Z]{3}\s?[0-9]{3,4}$/i,
-        error: 'Electric vehicle plates must start with E followed by 3 letters and 3-4 numbers (e.g., EABC1234)'
+        example: 'E-ABC-1234 or EABC1234',
+        pattern: /^E[-\s]?[A-HJ-NP-Z]{3}[-\s]?[0-9]{3,4}$/i,
+        error: 'Electric vehicle plates must start with E followed by 3 letters and 3-4 numbers (e.g., E-ABC-1234 or EABC1234)'
     },
     '<?= PlateValidator::TYPE_CONDUCTION ?>': {
-        example: '1234567',
+        example: '1234567 (digits only)',
         pattern: /^[0-9]{7,8}$/,
-        error: 'Conduction stickers must be 7-8 digits only'
+        error: 'Conduction stickers must be 7-8 digits only (no hyphens)'
     }
 };
 
@@ -892,6 +945,81 @@ document.addEventListener('DOMContentLoaded', function(){
     const plate = document.getElementById('plate_number');
     const example = document.getElementById('plateExample');
     const plateError = document.getElementById('plateError');
+    
+    // Input validation helpers
+    function validateOwnerName(name) {
+        if (!name || name.trim() === '') return 'Owner name is required.';
+        if (!/^[a-zA-Z ]+$/.test(name)) return 'Owner name can only contain letters and spaces. Special characters and numbers are not allowed.';
+        if (name.trim().length < 2) return 'Owner name must be at least 2 characters long.';
+        if (name.length > 100) return 'Owner name is too long (maximum 100 characters).';
+        return '';
+    }
+    
+    function validatePhone(phone) {
+        if (!phone || phone.trim() === '') return 'Owner phone is required.';
+        const clean = phone.replace(/[^0-9]/g, '');
+        if (!/^09[0-9]{9}$/.test(clean)) return 'Owner phone must be in format 09XXXXXXXXX (11 digits starting with 09).';
+        return '';
+    }
+    
+    function validateEmail(email) {
+        if (!email || email.trim() === '') return 'Owner email is required.';
+        if (!/[a-zA-Z]/.test(email)) return 'Owner email must contain at least one letter.';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Owner email must be a valid email address.';
+        return '';
+    }
+    
+    function validateModel(model) {
+        if (model && !/^[a-zA-Z0-9 \-()]+$/.test(model)) return 'Vehicle model can only contain letters, numbers, spaces, hyphens, and parentheses.';
+        if (model && model.length > 100) return 'Vehicle model is too long (maximum 100 characters).';
+        return '';
+    }
+    
+    function validateYear(year) {
+        if (!year) return ''; // Optional field
+        if (!/^[0-9]+$/.test(year)) return 'Year must be a valid number without special characters.';
+        const yearNum = parseInt(year, 10);
+        const currentYear = new Date().getFullYear();
+        if (yearNum < 0) return 'Year cannot be negative.';
+        if (yearNum < 1900) return 'Year must be 1900 or later.';
+        if (yearNum > currentYear) return 'Year cannot be greater than the current year (' + currentYear + ').';
+        return '';
+    }
+    
+    function validateColor(color) {
+        if (color && !/^[a-zA-Z ]+$/.test(color)) return 'Vehicle color can only contain letters and spaces. Special characters and numbers are not allowed.';
+        if (color && color.length > 50) return 'Vehicle color is too long (maximum 50 characters).';
+        return '';
+    }
+    
+    // Add real-time validation for all fields
+    function addFieldValidation(fieldId, validator, errorId) {
+        const field = document.getElementById(fieldId);
+        const errorEl = document.getElementById(errorId);
+        if (field && errorEl) {
+            field.addEventListener('blur', function() {
+                const error = validator(field.value);
+                if (error) {
+                    errorEl.textContent = error;
+                    errorEl.style.display = 'block';
+                    errorEl.style.color = '#dc2626';
+                    errorEl.style.fontSize = '0.875rem';
+                    errorEl.style.marginTop = '0.25rem';
+                    field.classList.add('is-invalid');
+                } else {
+                    errorEl.style.display = 'none';
+                    field.classList.remove('is-invalid');
+                }
+            });
+            
+            // Clear error on input
+            field.addEventListener('input', function() {
+                errorEl.style.display = 'none';
+                field.classList.remove('is-invalid');
+            });
+        }
+    }
+    
     if (sel && example) {
         sel.addEventListener('change', ()=> updateExample(sel, example));
     }
@@ -907,15 +1035,93 @@ document.addEventListener('DOMContentLoaded', function(){
             }
         });
     }
+    
     const formModal = document.getElementById('vehicleFormModal');
     if (formModal) {
         formModal.addEventListener('submit', function(e){
+            let hasError = false;
+            let firstError = null;
+            
+            // Validate all fields
+            const ownerNameField = document.getElementById('owner_name');
+            const ownerPhoneField = document.getElementById('owner_phone');
+            const ownerEmailField = document.getElementById('owner_email');
+            const modelField = document.getElementById('model');
+            const yearField = document.getElementById('year');
+            const colorField = document.getElementById('color');
+            
+            // Check owner name
+            if (ownerNameField) {
+                const error = validateOwnerName(ownerNameField.value);
+                if (error) {
+                    hasError = true;
+                    if (!firstError) firstError = ownerNameField;
+                    alert(error);
+                }
+            }
+            
+            // Check phone
+            if (ownerPhoneField) {
+                const error = validatePhone(ownerPhoneField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = ownerPhoneField;
+                    alert(error);
+                }
+            }
+            
+            // Check email
+            if (ownerEmailField) {
+                const error = validateEmail(ownerEmailField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = ownerEmailField;
+                    alert(error);
+                }
+            }
+            
+            // Check model
+            if (modelField) {
+                const error = validateModel(modelField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = modelField;
+                    alert(error);
+                }
+            }
+            
+            // Check year
+            if (yearField) {
+                const error = validateYear(yearField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = yearField;
+                    alert(error);
+                }
+            }
+            
+            // Check color
+            if (colorField) {
+                const error = validateColor(colorField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = colorField;
+                    alert(error);
+                }
+            }
+            
+            // Check plate
             const [ok, msg] = validatePlateForType(sel.value, plate.value);
-            if (!ok) {
-                e.preventDefault();
+            if (!ok && !hasError) {
+                hasError = true;
                 plateError.style.display = 'block';
                 plateError.textContent = msg;
-                plate.focus();
+                if (!firstError) firstError = plate;
+            }
+            
+            if (hasError) {
+                e.preventDefault();
+                if (firstError) firstError.focus();
             }
         });
     }
@@ -925,6 +1131,7 @@ document.addEventListener('DOMContentLoaded', function(){
     const plateAdd = document.getElementById('plate_number_add');
     const exampleAdd = document.getElementById('plateExampleAdd');
     const plateErrorAdd = document.getElementById('plateErrorAdd');
+    
     if (selAdd && exampleAdd) selAdd.addEventListener('change', ()=> updateExample(selAdd, exampleAdd));
     if (plateAdd && selAdd) plateAdd.addEventListener('blur', ()=>{
         const [ok, msg] = validatePlateForType(selAdd.value, plateAdd.value);
@@ -936,15 +1143,93 @@ document.addEventListener('DOMContentLoaded', function(){
             plateErrorAdd.textContent = '';
         }
     });
+    
     const formAdd = document.getElementById('vehicleFormAdd');
     if (formAdd) {
         formAdd.addEventListener('submit', function(e){
+            let hasError = false;
+            let firstError = null;
+            
+            // Validate all fields for add form
+            const ownerNameField = document.getElementById('owner_name_add');
+            const ownerPhoneField = document.getElementById('owner_phone_add');
+            const ownerEmailField = document.getElementById('owner_email_add');
+            const modelField = document.getElementById('model_add');
+            const yearField = document.getElementById('year_add');
+            const colorField = document.getElementById('color_add');
+            
+            // Check owner name
+            if (ownerNameField) {
+                const error = validateOwnerName(ownerNameField.value);
+                if (error) {
+                    hasError = true;
+                    if (!firstError) firstError = ownerNameField;
+                    alert(error);
+                }
+            }
+            
+            // Check phone
+            if (ownerPhoneField) {
+                const error = validatePhone(ownerPhoneField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = ownerPhoneField;
+                    alert(error);
+                }
+            }
+            
+            // Check email
+            if (ownerEmailField) {
+                const error = validateEmail(ownerEmailField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = ownerEmailField;
+                    alert(error);
+                }
+            }
+            
+            // Check model
+            if (modelField) {
+                const error = validateModel(modelField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = modelField;
+                    alert(error);
+                }
+            }
+            
+            // Check year
+            if (yearField) {
+                const error = validateYear(yearField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = yearField;
+                    alert(error);
+                }
+            }
+            
+            // Check color
+            if (colorField) {
+                const error = validateColor(colorField.value);
+                if (error && !hasError) {
+                    hasError = true;
+                    if (!firstError) firstError = colorField;
+                    alert(error);
+                }
+            }
+            
+            // Check plate
             const [ok, msg] = validatePlateForType(selAdd.value, plateAdd.value);
-            if (!ok) {
-                e.preventDefault();
+            if (!ok && !hasError) {
+                hasError = true;
                 plateErrorAdd.style.display = 'block';
                 plateErrorAdd.textContent = msg;
-                plateAdd.focus();
+                if (!firstError) firstError = plateAdd;
+            }
+            
+            if (hasError) {
+                e.preventDefault();
+                if (firstError) firstError.focus();
             }
         });
     }

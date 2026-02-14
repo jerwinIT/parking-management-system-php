@@ -28,15 +28,69 @@ $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $model = trim($_POST['model'] ?? '');
+    $year = trim($_POST['year'] ?? '');
     $color = trim($_POST['color'] ?? '');
-    $stmt = $pdo->prepare('UPDATE vehicles SET model = ?, color = ? WHERE id = ? AND user_id = ?');
-    $stmt->execute([$model ?: null, $color ?: null, $id, currentUserId()]);
-    header('Location: ' . BASE_URL . '/user/register-car.php?updated=1');
-    exit;
+    
+    // Validate model - no special characters except spaces, hyphens, and parentheses
+    if (!empty($model)) {
+        if (!preg_match('/^[a-zA-Z0-9 \-()]+$/', $model)) {
+            $error = 'Vehicle model can only contain letters, numbers, spaces, hyphens, and parentheses. Special characters are not allowed.';
+        } elseif (strlen($model) > 100) {
+            $error = 'Vehicle model is too long (maximum 100 characters).';
+        }
+    }
+    
+    // Validate year - must be positive number and reasonable range
+    if (empty($error) && !empty($year)) {
+        if (!preg_match('/^[0-9]+$/', $year)) {
+            $error = 'Year must be a valid number without special characters.';
+        } else {
+            $year_num = (int)$year;
+            $current_year = (int)date('Y');
+            
+            if ($year_num < 0) {
+                $error = 'Year cannot be negative.';
+            } elseif ($year_num < 1900) {
+                $error = 'Year must be 1900 or later.';
+            } elseif ($year_num > $current_year) {
+                $error = 'Year cannot be greater than the current year (' . $current_year . ').';
+            }
+        }
+    }
+    
+    // Validate color - only letters and spaces, no special characters or numbers
+    if (empty($error) && !empty($color)) {
+        if (!preg_match('/^[a-zA-Z ]+$/', $color)) {
+            $error = 'Vehicle color can only contain letters and spaces. Special characters and numbers are not allowed.';
+        } elseif (strlen($color) > 50) {
+            $error = 'Vehicle color is too long (maximum 50 characters).';
+        }
+    }
+    
+    if (empty($error)) {
+        // Append year to model if provided
+        $store_model = $model;
+        if ($year) {
+            if ($store_model) $store_model = $store_model . ' (' . $year . ')';
+            else $store_model = $year;
+        }
+        
+        $stmt = $pdo->prepare('UPDATE vehicles SET model = ?, color = ? WHERE id = ? AND user_id = ?');
+        $stmt->execute([$store_model ?: null, $color ?: null, $id, currentUserId()]);
+        header('Location: ' . BASE_URL . '/user/register-car.php?updated=1');
+        exit;
+    }
 }
 
 $model = $car['model'] ?? '';
 $color = $car['color'] ?? '';
+
+// Extract year from model if it's in the format "Model (Year)"
+$year = '';
+if (preg_match('/^(.+?)\s*\((\d{4})\)$/', $model, $matches)) {
+    $model = trim($matches[1]);
+    $year = $matches[2];
+}
 
 // fetch all vehicles for this user to show below the edit form
 $vehiclesStmt = $pdo->prepare('SELECT * FROM vehicles WHERE user_id = ? ORDER BY is_default DESC, created_at DESC');
@@ -377,6 +431,39 @@ require dirname(__DIR__) . '/includes/header.php';
         margin: 0;
     }
 }
+
+/* Validation Error Styling */
+.form-control.is-invalid {
+    border-color: #dc2626 !important;
+    background-color: #fef2f2;
+}
+
+.form-control.is-invalid:focus {
+    border-color: #dc2626 !important;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1) !important;
+}
+
+/* Alert Styling */
+.alert {
+    padding: 1rem 1.25rem;
+    border-radius: 10px;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+}
+
+.alert-danger {
+    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+}
+
+.alert-danger i {
+    font-size: 1.25rem;
+    color: #dc2626;
+}
 </style>
 
 <div class="my-vehicles-page">
@@ -389,7 +476,14 @@ require dirname(__DIR__) . '/includes/header.php';
 
     <div class="vehicle-form-card">
         <h5><i class="bi bi-pencil-square me-2"></i>Vehicle Information</h5>
-        <form method="post" action="<?= BASE_URL ?>/user/edit-car.php?id=<?= $id ?>">
+        
+        <?php if ($error): ?>
+            <div class="alert alert-danger" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i><?= htmlspecialchars($error) ?>
+            </div>
+        <?php endif; ?>
+        
+        <form method="post" action="<?= BASE_URL ?>/user/edit-car.php?id=<?= $id ?>" id="editVehicleForm">
             <div class="vehicle-form-grid">
                 <div>
                     <label class="form-label">Plate Number</label>
@@ -398,21 +492,21 @@ require dirname(__DIR__) . '/includes/header.php';
                 </div>
                 <div>
                     <label class="form-label">Vehicle Model</label>
-                    <input type="text" name="model" class="form-control" value="<?= htmlspecialchars($model) ?>" placeholder="e.g. Toyota Corolla">
+                    <input type="text" name="model" id="model" class="form-control" value="<?= htmlspecialchars($model) ?>" placeholder="e.g. Toyota Corolla">
                     <div class="form-text">Make and model of your vehicle</div>
+                    <div id="modelError" style="display: none; color: #dc2626; font-size: 0.875rem; margin-top: 0.25rem;"></div>
+                </div>
+                <div>
+                    <label class="form-label">Year</label>
+                    <input type="text" name="year" id="year" class="form-control" value="<?= htmlspecialchars($year) ?>" placeholder="e.g. 2020" maxlength="4">
+                    <div class="form-text">Year of manufacture (optional)</div>
+                    <div id="yearError" style="display: none; color: #dc2626; font-size: 0.875rem; margin-top: 0.25rem;"></div>
                 </div>
                 <div>
                     <label class="form-label">Color</label>
-                    <select name="color" class="form-control">
-                        <option value="">Select color</option>
-                        <option<?= ($color==='White' ? ' selected' : '') ?>>White</option>
-                        <option<?= ($color==='Black' ? ' selected' : '') ?>>Black</option>
-                        <option<?= ($color==='Silver' ? ' selected' : '') ?>>Silver</option>
-                        <option<?= ($color==='Blue' ? ' selected' : '') ?>>Blue</option>
-                        <option<?= ($color==='Red' ? ' selected' : '') ?>>Red</option>
-                        <option<?= ($color && !in_array($color,['White','Black','Silver','Blue','Red']) ? ' selected' : '') ?>>Other</option>
-                    </select>
-                    <div class="form-text">Vehicle exterior color</div>
+                    <input type="text" name="color" id="color" class="form-control" value="<?= htmlspecialchars($color) ?>" placeholder="e.g. White, Black, Silver">
+                    <div class="form-text">Vehicle exterior color (optional)</div>
+                    <div id="colorError" style="display: none; color: #dc2626; font-size: 0.875rem; margin-top: 0.25rem;"></div>
                 </div>
             </div>
             <div class="vehicle-form-actions">
@@ -472,5 +566,151 @@ require dirname(__DIR__) . '/includes/header.php';
         <?php endif; ?>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('editVehicleForm');
+    const modelField = document.getElementById('model');
+    const yearField = document.getElementById('year');
+    const colorField = document.getElementById('color');
+    const modelError = document.getElementById('modelError');
+    const yearError = document.getElementById('yearError');
+    const colorError = document.getElementById('colorError');
+    
+    // Validation functions
+    function validateModel(model) {
+        if (model && !/^[a-zA-Z0-9 \-()]+$/.test(model)) {
+            return 'Vehicle model can only contain letters, numbers, spaces, hyphens, and parentheses.';
+        }
+        if (model && model.length > 100) {
+            return 'Vehicle model is too long (maximum 100 characters).';
+        }
+        return '';
+    }
+    
+    function validateYear(year) {
+        if (!year) return ''; // Optional field
+        if (!/^[0-9]+$/.test(year)) {
+            return 'Year must be a valid number without special characters.';
+        }
+        const yearNum = parseInt(year, 10);
+        const currentYear = new Date().getFullYear();
+        if (yearNum < 0) return 'Year cannot be negative.';
+        if (yearNum < 1900) return 'Year must be 1900 or later.';
+        if (yearNum > currentYear) {
+            return 'Year cannot be greater than the current year (' + currentYear + ').';
+        }
+        return '';
+    }
+    
+    function validateColor(color) {
+        if (color && !/^[a-zA-Z ]+$/.test(color)) {
+            return 'Vehicle color can only contain letters and spaces. Special characters and numbers are not allowed.';
+        }
+        if (color && color.length > 50) {
+            return 'Vehicle color is too long (maximum 50 characters).';
+        }
+        return '';
+    }
+    
+    function showError(field, errorEl, message) {
+        if (message) {
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+            field.classList.add('is-invalid');
+            field.style.borderColor = '#dc2626';
+        } else {
+            errorEl.style.display = 'none';
+            field.classList.remove('is-invalid');
+            field.style.borderColor = '';
+        }
+    }
+    
+    // Real-time validation on blur
+    if (modelField) {
+        modelField.addEventListener('blur', function() {
+            const error = validateModel(this.value.trim());
+            showError(modelField, modelError, error);
+        });
+        
+        modelField.addEventListener('input', function() {
+            modelError.style.display = 'none';
+            this.classList.remove('is-invalid');
+            this.style.borderColor = '';
+        });
+    }
+    
+    if (yearField) {
+        yearField.addEventListener('blur', function() {
+            const error = validateYear(this.value.trim());
+            showError(yearField, yearError, error);
+        });
+        
+        yearField.addEventListener('input', function() {
+            // Only allow numbers
+            this.value = this.value.replace(/[^0-9]/g, '');
+            yearError.style.display = 'none';
+            this.classList.remove('is-invalid');
+            this.style.borderColor = '';
+        });
+    }
+    
+    if (colorField) {
+        colorField.addEventListener('blur', function() {
+            const error = validateColor(this.value.trim());
+            showError(colorField, colorError, error);
+        });
+        
+        colorField.addEventListener('input', function() {
+            colorError.style.display = 'none';
+            this.classList.remove('is-invalid');
+            this.style.borderColor = '';
+        });
+    }
+    
+    // Form submission validation
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            let hasError = false;
+            let firstError = null;
+            
+            // Validate model
+            const modelValue = modelField ? modelField.value.trim() : '';
+            const modelErr = validateModel(modelValue);
+            if (modelErr) {
+                hasError = true;
+                showError(modelField, modelError, modelErr);
+                if (!firstError) firstError = modelField;
+            }
+            
+            // Validate year
+            const yearValue = yearField ? yearField.value.trim() : '';
+            const yearErr = validateYear(yearValue);
+            if (yearErr) {
+                hasError = true;
+                showError(yearField, yearError, yearErr);
+                if (!firstError) firstError = yearField;
+            }
+            
+            // Validate color
+            const colorValue = colorField ? colorField.value.trim() : '';
+            const colorErr = validateColor(colorValue);
+            if (colorErr) {
+                hasError = true;
+                showError(colorField, colorError, colorErr);
+                if (!firstError) firstError = colorField;
+            }
+            
+            if (hasError) {
+                e.preventDefault();
+                if (firstError) {
+                    firstError.focus();
+                    firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        });
+    }
+});
+</script>
 
 <?php require dirname(__DIR__) . '/includes/footer.php'; ?>
