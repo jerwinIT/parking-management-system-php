@@ -1,0 +1,7 @@
+{
+  "name": "parkingsystem/parking-management-system",
+  "description": "Parking Management System",
+  "require": {
+    "phpmailer/phpmailer": "^6.8"
+  }
+}
