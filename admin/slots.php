@@ -112,9 +112,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($needMaxCol) {
             $pdo->exec("ALTER TABLE parking_settings ADD COLUMN max_booking_hours INT DEFAULT NULL");
         }
-        $price = (float) str_replace(',', '.', trim($_POST['price_per_hour'] ?? '0'));
+        $price = (float) str_replace(',', '.', trim($_POST['price_per_hour'] ?? ''));
         $maxh = (int) ($_POST['max_booking_hours'] ?? 0);
-        if ($price < 0) $price = 0;
+        
+        // Validate price: must be greater than 0
+        if ($price <= 0) {
+            setAlert('Price per hour must be greater than zero.', 'danger');
+            header('Location: ' . BASE_URL . '/admin/slots.php');
+            exit;
+        }
+        
         if ($maxh < 0) $maxh = 0;
         $stmt = $pdo->prepare('UPDATE parking_settings SET price_per_hour = :price, max_booking_hours = :maxh');
         $stmt->execute([':price' => $price, ':maxh' => $maxh]);
@@ -718,18 +725,14 @@ ksort($floors);
                         <div class="info-box mb-3">Manage the total number of parking slots in your lot. Current total: <?= (int) $slot_count ?></div>
                         <form method="post" action="<?= BASE_URL ?>/admin/slots.php">
                             <input type="hidden" name="action" value="update_slots">
-                            <div class="row g-3">
+                      
                                 <div class="col-md-6">
                                     <label class="form-label">Total Parking Slots</label>
                                     <input type="number" name="total_slots" class="form-control" min="1" max="200" value="<?= (int) $total_slots ?>" required>
                                     <div class="form-text">Number of available parking spaces</div>
                                 </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Slot Naming Prefix</label>
-                                    <input type="text" name="slot_prefix" class="form-control" maxlength="4" value="<?= htmlspecialchars($slot_prefix) ?>">
-                                    <div class="form-text">e.g., A, B (single letter)</div>
-                                </div>
-                            </div>
+                               
+                    
                             <div class="modal-footer-custom">
                                 <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
                                 <button type="submit" class="btn btn-primary">Update Slots</button>
@@ -744,7 +747,7 @@ ksort($floors);
                                         <label class="form-label">Price Per Hour (₱)</label>
                                         <div class="input-group">
                                             <span class="input-group-text">₱</span>
-                                            <input type="number" step="0.01" min="0" name="price_per_hour" class="form-control" value="<?= htmlspecialchars($price_per_hour) ?>">
+                                            <input type="number" step="0.01" min="0.01" name="price_per_hour" class="form-control" value="<?= htmlspecialchars($price_per_hour) ?>" required>
                                         </div>
                                         <div class="form-text">Hourly parking rate</div>
                                     </div>
