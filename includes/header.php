@@ -73,11 +73,15 @@ if (!isset($page_title)) $page_title = 'Parking Management System';
         }
         .top-bar.sidebar-collapsed { left: var(--sidebar-width-collapsed); }
         .btn-hamburger {
-            width: 40px; height: 40px; border: none; background: transparent;
+            height: 40px; border: none; background: transparent;
             color: #374151; border-radius: 8px; display: flex; align-items: center; justify-content: center;
-            font-size: 1.35rem; cursor: pointer;
+            font-size: 1.35rem; cursor: pointer; gap: 0.5rem; padding: 0 0.75rem;
         }
         .btn-hamburger:hover { background: #f3f4f6; color: var(--primary); }
+        .btn-hamburger-text { font-size: 0.95rem; font-weight: 600; display: none; }
+        @media (max-width: 767px) {
+            .btn-hamburger-text { display: inline-block; }
+        }
         .dashboard-page { max-width: none; width: 100%; margin-left: 0; margin-right: 0; }
         /* Make Bootstrap containers span the full available width so pages don't appear centered */
         .container {
@@ -200,6 +204,7 @@ if (!isset($page_title)) $page_title = 'Parking Management System';
         <div class="d-flex align-items-center gap-2">
             <button type="button" class="btn-hamburger" id="btnHamburger" aria-label="Toggle sidebar">
                 <i class="bi bi-list"></i>
+                <span class="btn-hamburger-text">Menu</span>
             </button>
             <h5 class="mb-0 text-dark fw-bold"><?= htmlspecialchars($page_title) ?></h5>
         </div>

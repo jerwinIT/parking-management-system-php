@@ -454,7 +454,12 @@ require __DIR__ . '/includes/header.php';
         </div>
         <div class="dashboard-card-body">
             <?php if (empty($recent)): ?>
-                <p class="text-muted mb-0">No bookings yet. <a href="<?= BASE_URL ?>/booking.php">Book a slot now!</a></p>
+                <p class="text-muted mb-0">
+  No bookings yet. 
+  <a href="<?= BASE_URL ?>/user/book.php" class="text-success fw-bold text-decoration-none">
+    Book a slot now!
+  </a>
+</p>
             <?php else: ?>
                 <div class="table-responsive">
                     <table class="booking-table">
@@ -539,25 +544,26 @@ require __DIR__ . '/includes/header.php';
             </div>
             <div class="dashboard-card-body">
                 <div class="quick-actions">
-                    <a href="<?= BASE_URL ?>/booking.php" class="quick-action-btn">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-plus-circle-fill"></i>
-                        </div>
-                        <div class="quick-action-text">New Booking</div>
-                    </a>
-                    <a href="<?= BASE_URL ?>/bookings.php" class="quick-action-btn">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-list-check"></i>
-                        </div>
-                        <div class="quick-action-text">View All</div>
-                    </a>
-                    <a href="<?= BASE_URL ?>/vehicles.php" class="quick-action-btn">
+                     <a href="<?= BASE_URL ?>/user/register-car.php" class="quick-action-btn">
                         <div class="quick-action-icon">
                             <i class="bi bi-car-front-fill"></i>
                         </div>
                         <div class="quick-action-text">My Vehicles</div>
                     </a>
-                    <a href="<?= BASE_URL ?>/profile.php" class="quick-action-btn">
+                    <a href="<?= BASE_URL ?>/user/book.php" class="quick-action-btn">
+                        <div class="quick-action-icon">
+                            <i class="bi bi-plus-circle-fill"></i>
+                        </div>
+                        <div class="quick-action-text">New Booking</div>
+                    </a>
+                    <a href="<?= BASE_URL ?>/user/booking-history.php" class="quick-action-btn">
+                        <div class="quick-action-icon">
+                            <i class="bi bi-list-check"></i>
+                        </div>
+                        <div class="quick-action-text">View All</div>
+                    </a>
+                   
+                    <a href="<?= BASE_URL ?>/user/profile.php" class="quick-action-btn">
                         <div class="quick-action-icon">
                             <i class="bi bi-person-circle"></i>
                         </div>
