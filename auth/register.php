@@ -346,9 +346,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <label class="form-label">Email <span class="text-danger">*</span></label>
                                 <input type="email" name="email" id="email" class="form-control" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required maxlength="255">
                             </div>
-                            <div class="mb-2">
-                                <div class="form-text-helper">3-20 characters. Letters, numbers, underscores, and hyphens only.</div>
-                            </div>
+                           
                             <div class="row g-2">
                                 <div class="col-12 mb-2">
                                     <label class="form-label">Password <span class="text-danger">*</span></label>

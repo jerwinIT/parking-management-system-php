@@ -23,7 +23,8 @@ if ($row && in_array($row['status'], ['pending', 'parked'])) {
     $pdo->beginTransaction();
     try {
         $pdo->prepare('UPDATE bookings SET status = ? WHERE id = ?')->execute(['cancelled', $id]);
-        if ($row['status'] === 'parked') {
+        // Free the parking slot for both 'pending' and 'parked' bookings
+        if ($row['parking_slot_id']) {
             $pdo->prepare('UPDATE parking_slots SET status = ? WHERE id = ?')->execute(['available', $row['parking_slot_id']]);
         }
         $pdo->commit();

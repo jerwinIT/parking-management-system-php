@@ -80,6 +80,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_booking'])) {
                 if ($pd && $et) $exit_dt = $pd . ' ' . (strlen($et) === 5 ? $et . ':00' : substr($et, 0, 8));
                 if (!$entry_dt) $entry_dt = date('Y-m-d H:i:s');
 
+                // Validate date is not in the past
+                $current_datetime = date('Y-m-d H:i:s');
+                $today_date = date('Y-m-d');
+                
+                if ($pd && $pd < $today_date) {
+                    $error = 'Cannot book parking for past dates. Please select today or a future date.';
+                    $step = 3;
+                    $selected_slot_id = $slot_id;
+                    goto BOOKING_END_SKIP;
+                }
+                
+                // If booking for today, validate time is not in the past
+                if ($pd === $today_date && $entry_dt && $entry_dt < $current_datetime) {
+                    $error = 'Cannot book parking for past time. Please select a future time.';
+                    $step = 3;
+                    $selected_slot_id = $slot_id;
+                    goto BOOKING_END_SKIP;
+                }
+                
+                // Validate exit time is after entry time
+                if ($entry_dt && $exit_dt && $exit_dt <= $entry_dt) {
+                    $error = 'Exit time must be after entry time.';
+                    $step = 3;
+                    $selected_slot_id = $slot_id;
+                    goto BOOKING_END_SKIP;
+                }
+
                 // fetch operating hours
                 $hours = $pdo->query('SELECT opening_time, closing_time FROM parking_settings LIMIT 1')->fetch();
                 $opening = $hours['opening_time'] ?? null;
@@ -149,12 +176,124 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
         $error = 'Missing payment or booking information.';
         $step = 4;
     } else {
+        // Validate payment mode selection
+        $valid_payment_modes = ['cash', 'credit_card', 'debit_card', 'mobile_wallet'];
+        if (!in_array($payment_mode, $valid_payment_modes)) {
+            $error = 'Invalid payment method selected.';
+            $step = 4;
+        }
+        
+        // Validate payer name - required, letters and spaces only, no special characters
+        if (empty($error)) {
+            if (empty($payer_name)) {
+                $error = 'Payer name is required.';
+                $step = 4;
+            } elseif (!preg_match('/^[a-zA-Z ]+$/', $payer_name)) {
+                $error = 'Payer name can only contain letters and spaces. Special characters and numbers are not allowed.';
+                $step = 4;
+            } elseif (strlen($payer_name) < 2) {
+                $error = 'Payer name must be at least 2 characters long.';
+                $step = 4;
+            } elseif (strlen($payer_name) > 100) {
+                $error = 'Payer name is too long (maximum 100 characters).';
+                $step = 4;
+            }
+        }
+        
+        // Validate account number for credit/debit cards - required, no special characters
+        if (empty($error) && in_array($payment_mode, ['credit_card', 'debit_card'])) {
+            if (empty($account_number)) {
+                $error = 'Account/Card number is required.';
+                $step = 4;
+            } elseif (!preg_match('/^[0-9]+$/', $account_number)) {
+                $error = 'Account/Card number can only contain numbers. Special characters are not allowed.';
+                $step = 4;
+            } elseif (strlen($account_number) < 10) {
+                $error = 'Account/Card number must be at least 10 digits.';
+                $step = 4;
+            } elseif (strlen($account_number) > 19) {
+                $error = 'Account/Card number is too long (maximum 19 digits).';
+                $step = 4;
+            }
+        }
+        
+        // Validate card type selection for credit/debit cards
+        if (empty($error) && $payment_mode === 'credit_card') {
+            if (empty($credit_card_type)) {
+                $error = 'Please select a credit card type.';
+                $step = 4;
+            } elseif (!in_array($credit_card_type, ['visa', 'mastercard', 'amex'])) {
+                $error = 'Invalid credit card type selected.';
+                $step = 4;
+            }
+        }
+        
+        if (empty($error) && $payment_mode === 'debit_card') {
+            if (empty($debit_card_type)) {
+                $error = 'Please select a debit card type.';
+                $step = 4;
+            } elseif (!in_array($debit_card_type, ['visa', 'mastercard'])) {
+                $error = 'Invalid debit card type selected.';
+                $step = 4;
+            }
+        }
+        
+        // Validate mobile wallet selection and contact number
+        if (empty($error) && $payment_mode === 'mobile_wallet') {
+            if (empty($mobile_wallet_type)) {
+                $error = 'Please select a mobile wallet type.';
+                $step = 4;
+            } elseif (!in_array($mobile_wallet_type, ['gcash', 'paymaya', 'grabpay', 'shopeepay'])) {
+                $error = 'Invalid mobile wallet type selected.';
+                $step = 4;
+            }
+            
+            // Validate wallet contact for GCash and PayMaya
+            if (empty($error) && in_array($mobile_wallet_type, ['gcash', 'paymaya'])) {
+                if (empty($wallet_contact)) {
+                    $error = 'Mobile wallet contact number is required for ' . ucfirst($mobile_wallet_type) . '.';
+                    $step = 4;
+                } else {
+                    $clean_contact = preg_replace('/[^0-9]/', '', $wallet_contact);
+                    if (!preg_match('/^09[0-9]{9}$/', $clean_contact)) {
+                        $error = 'Mobile wallet contact must be in format 09XXXXXXXXX (11 digits starting with 09).';
+                        $step = 4;
+                    }
+                }
+            }
+        }
+        
+        if (empty($error)) {
         // prepare entry/exit datetimes
         $pd = trim($_POST['parking_date'] ?? '');
         $st = trim($_POST['start_time'] ?? '');
         $et = trim($_POST['end_time'] ?? '');
         $entry_dt = $pd && $st ? $pd . ' ' . (strlen($st) === 5 ? $st . ':00' : substr($st,0,8)) : date('Y-m-d H:i:s');
         $exit_dt = $pd && $et ? $pd . ' ' . (strlen($et) === 5 ? $et . ':00' : substr($et,0,8)) : null;
+        
+        // Validate date is not in the past
+        $current_datetime = date('Y-m-d H:i:s');
+        $today_date = date('Y-m-d');
+        
+        if ($pd && $pd < $today_date) {
+            $error = 'Cannot book parking for past dates. Please select today or a future date.';
+            $step = 4;
+        }
+        
+        // If booking for today, validate time is not in the past
+        if (empty($error) && $pd === $today_date && $entry_dt && $entry_dt < $current_datetime) {
+            $error = 'Cannot book parking for past time. Please select a future time.';
+            $step = 4;
+        }
+        
+        // Validate exit time is after entry time
+        if (empty($error) && $entry_dt && $exit_dt && $exit_dt <= $entry_dt) {
+            $error = 'Exit time must be after entry time.';
+            $step = 4;
+        }
+        } // close the first if (empty($error)) block from date validation
+        
+        if (empty($error)) {
 
         // ensure payments table has payer fields and subtype/contact
         try {
@@ -252,6 +391,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
         }
         PAYMENT_VALIDATE_END: ;
     }
+}
 }
 
 require dirname(__DIR__) . '/includes/header.php';
@@ -736,7 +876,8 @@ require dirname(__DIR__) . '/includes/header.php';
                     <label class="form-label fw-600" style="font-weight:600;color:#374151;">
                         <i class="bi bi-calendar3 me-2" style="color:#16a34a;"></i>Parking Date
                     </label>
-                    <input type="date" name="parking_date" class="form-control" style="border-radius:10px;padding:0.85rem 1rem;border:1px solid #e5f2e8;background:#fafcfb;transition:all cubic-bezier(0.4, 0, 0.2, 1) 0.3s;" required>
+                    <input type="date" name="parking_date" id="parkingDate" class="form-control" style="border-radius:10px;padding:0.85rem 1rem;border:1px solid #e5f2e8;background:#fafcfb;transition:all cubic-bezier(0.4, 0, 0.2, 1) 0.3s;" min="<?= date('Y-m-d') ?>" required>
+                    <small class="form-text text-muted">Cannot select past dates</small>
                 </div>
                 <div class="mb-4">
                     <label class="form-label fw-600" style="font-weight:600;color:#374151;">
@@ -763,11 +904,12 @@ require dirname(__DIR__) . '/includes/header.php';
     <script>
     (function() {
         var form = document.getElementById('formStep2');
+        var dateEl = form ? form.querySelector('input[name="parking_date"]') : null;
         var startEl = form ? form.querySelector('input[name="start_time"]') : null;
         var endEl = form ? form.querySelector('input[name="end_time"]') : null;
         var textEl = document.getElementById('estimatedDurationText');
         var notice = document.getElementById('hoursNotice');
-        if (!form || !startEl || !endEl || !textEl) return;
+        if (!form || !dateEl || !startEl || !endEl || !textEl) return;
 
         var opening = form.getAttribute('data-opening') || '';
         var closing = form.getAttribute('data-closing') || '';
@@ -776,6 +918,21 @@ require dirname(__DIR__) . '/includes/header.php';
             if (!str || str.length < 4) return null;
             var parts = str.split(':');
             return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+        }
+        
+        function getTodayDate() {
+            var today = new Date();
+            var year = today.getFullYear();
+            var month = String(today.getMonth() + 1).padStart(2, '0');
+            var day = String(today.getDate()).padStart(2, '0');
+            return year + '-' + month + '-' + day;
+        }
+        
+        function getCurrentTime() {
+            var now = new Date();
+            var hours = String(now.getHours()).padStart(2, '0');
+            var minutes = String(now.getMinutes()).padStart(2, '0');
+            return hours + ':' + minutes;
         }
 
         var estBox = document.getElementById('estimatedDurationBox');
@@ -797,11 +954,36 @@ require dirname(__DIR__) . '/includes/header.php';
 
         function updateDurationAndValidate() {
             clearValidation();
+            
+            // Validate date is not in the past
+            var selectedDate = dateEl.value;
+            var todayDate = getTodayDate();
+            
+            if (selectedDate && selectedDate < todayDate) {
+                setValidation('Cannot book parking for past dates. Please select today or a future date.');
+                return;
+            }
+            
             var start = parseTimeToMinutes(startEl.value);
             var end = parseTimeToMinutes(endEl.value);
+            
+            // If booking for today, validate start time is not in the past
+            if (selectedDate === todayDate && start !== null) {
+                var currentTime = getCurrentTime();
+                var currentMinutes = parseTimeToMinutes(currentTime);
+                
+                if (start < currentMinutes) {
+                    setValidation('Cannot book parking for past time. Please select a future time.');
+                    return;
+                }
+            }
+            
             if (start == null || end == null) { textEl.textContent = '—'; return; }
             var mins = end - start;
-            if (mins <= 0) { textEl.textContent = '—'; return; }
+            if (mins <= 0) { 
+                setValidation('Exit time must be after entry time.');
+                return; 
+            }
             var h = Math.floor(mins / 60);
             var m = mins % 60;
             var parts = [];
@@ -830,6 +1012,8 @@ require dirname(__DIR__) . '/includes/header.php';
             }
         }
 
+        dateEl.addEventListener('change', updateDurationAndValidate);
+        dateEl.addEventListener('input', updateDurationAndValidate);
         startEl.addEventListener('change', updateDurationAndValidate);
         startEl.addEventListener('input', updateDurationAndValidate);
         endEl.addEventListener('change', updateDurationAndValidate);
@@ -1100,12 +1284,14 @@ require dirname(__DIR__) . '/includes/header.php';
                 </div>
 
                 <div id="accountNumberWrap" class="mb-3 mt-3">
-                    <label class="form-label">Account Number / Reference </label>
-                    <input type="text" name="account_number" class="form-control" placeholder="Account number or transaction reference">
+                    <label class="form-label">Card Number <span class="text-danger">*</span></label>
+                    <input type="text" name="account_number" id="accountNumber" class="form-control" placeholder="Enter card number (10-19 digits)" maxlength="19" required>
+                    <small class="form-text text-muted">Enter your credit/debit card number</small>
                 </div>
                 <div id="payerNameWrap" class="mb-3" style="display:none;">
-                    <label class="form-label">Full Name of Payer/ Booker</label>
-                    <input type="text" id="payerName" name="payer_name" class="form-control" placeholder="Full Name of Payer/ Booker">
+                    <label class="form-label">Full Name (Cardholder/Payer Name) <span class="text-danger">*</span></label>
+                    <input type="text" id="payerName" name="payer_name" class="form-control" placeholder="Enter full name as shown on card/ID" required>
+                    <small class="form-text text-muted">Required for all payment methods</small>
                 </div>
 
                 <div class="payment-actions">
@@ -1130,7 +1316,183 @@ require dirname(__DIR__) . '/includes/header.php';
         var payerNameWrap = document.getElementById('payerNameWrap');
         var payerNameInput = document.getElementById('payerName');
             var accountNumberWrap = document.getElementById('accountNumberWrap');
+        var accountNumberInput = accountNumberWrap ? accountNumberWrap.querySelector('input[name="account_number"]') : null;
         var submitBtn = document.getElementById('btnContinuePayment');
+        var paymentForm = submitBtn ? submitBtn.closest('form') : null;
+        
+        // Validation functions
+        function validatePayerName(name) {
+            if (!name || name.trim() === '') return 'Payer name is required.';
+            if (!/^[a-zA-Z ]+$/.test(name)) return 'Payer name can only contain letters and spaces. Special characters and numbers are not allowed.';
+            if (name.trim().length < 2) return 'Payer name must be at least 2 characters long.';
+            if (name.length > 100) return 'Payer name is too long (maximum 100 characters).';
+            return '';
+        }
+        
+        function validateAccountNumber(number) {
+            if (!number || number.trim() === '') return 'Account/Card number is required.';
+            if (!/^[0-9]+$/.test(number)) return 'Account/Card number can only contain numbers. Special characters are not allowed.';
+            if (number.length < 10) return 'Account/Card number must be at least 10 digits.';
+            if (number.length > 19) return 'Account/Card number is too long (maximum 19 digits).';
+            return '';
+        }
+        
+        function validateWalletContact(contact) {
+            if (!contact || contact.trim() === '') return 'Mobile wallet contact number is required.';
+            const clean = contact.replace(/[^0-9]/g, '');
+            if (!/^09[0-9]{9}$/.test(clean)) return 'Mobile wallet contact must be in format 09XXXXXXXXX (11 digits starting with 09).';
+            return '';
+        }
+        
+        function showFieldError(field, message) {
+            if (!field) return;
+            
+            // Remove existing error
+            var existingError = field.parentElement.querySelector('.validation-error');
+            if (existingError) existingError.remove();
+            
+            if (message) {
+                field.style.borderColor = '#dc2626';
+                field.style.backgroundColor = '#fef2f2';
+                
+                var errorDiv = document.createElement('div');
+                errorDiv.className = 'validation-error';
+                errorDiv.style.cssText = 'color: #dc2626; font-size: 0.875rem; margin-top: 0.25rem;';
+                errorDiv.textContent = message;
+                field.parentElement.appendChild(errorDiv);
+            } else {
+                field.style.borderColor = '';
+                field.style.backgroundColor = '';
+            }
+        }
+        
+        function clearFieldError(field) {
+            showFieldError(field, '');
+        }
+        
+        // Real-time validation
+        if (payerNameInput) {
+            payerNameInput.addEventListener('blur', function() {
+                if (this.parentElement.style.display !== 'none') {
+                    const error = validatePayerName(this.value);
+                    showFieldError(this, error);
+                }
+            });
+            
+            payerNameInput.addEventListener('input', function() {
+                clearFieldError(this);
+            });
+        }
+        
+        if (accountNumberInput) {
+            accountNumberInput.addEventListener('blur', function() {
+                var paymentMode = document.querySelector('input[name="payment_mode"]:checked');
+                if (paymentMode && (paymentMode.value === 'credit_card' || paymentMode.value === 'debit_card')) {
+                    const error = validateAccountNumber(this.value);
+                    showFieldError(this, error);
+                }
+            });
+            
+            accountNumberInput.addEventListener('input', function() {
+                // Only allow numbers
+                this.value = this.value.replace(/[^0-9]/g, '');
+                clearFieldError(this);
+            });
+        }
+        
+        if (walletContactInput) {
+            walletContactInput.addEventListener('blur', function() {
+                if (this.parentElement.style.display !== 'none') {
+                    const error = validateWalletContact(this.value);
+                    showFieldError(this, error);
+                }
+            });
+            
+            walletContactInput.addEventListener('input', function() {
+                clearFieldError(this);
+            });
+        }
+        
+        // Form submission validation
+        if (paymentForm) {
+            paymentForm.addEventListener('submit', function(e) {
+                var hasError = false;
+                var firstError = null;
+                
+                var paymentMode = document.querySelector('input[name="payment_mode"]:checked');
+                
+                if (!paymentMode) {
+                    e.preventDefault();
+                    alert('Please select a payment method.');
+                    return false;
+                }
+                
+                // Validate payer name for ALL payment methods (required for all)
+                if (payerNameInput && payerNameWrap && payerNameWrap.style.display !== 'none') {
+                    const error = validatePayerName(payerNameInput.value);
+                    if (error) {
+                        hasError = true;
+                        showFieldError(payerNameInput, error);
+                        if (!firstError) firstError = payerNameInput;
+                    }
+                }
+                
+                // Validate account number for credit/debit cards
+                if (paymentMode.value === 'credit_card' || paymentMode.value === 'debit_card') {
+                    // Check card type selection
+                    var cardTypeInput = paymentMode.value === 'credit_card' 
+                        ? document.querySelector('input[name="credit_card_type"]:checked')
+                        : document.querySelector('input[name="debit_card_type"]:checked');
+                    
+                    if (!cardTypeInput) {
+                        hasError = true;
+                        alert('Please select a card type.');
+                        e.preventDefault();
+                        return false;
+                    }
+                    
+                    if (accountNumberInput) {
+                        const error = validateAccountNumber(accountNumberInput.value);
+                        if (error) {
+                            hasError = true;
+                            showFieldError(accountNumberInput, error);
+                            if (!firstError) firstError = accountNumberInput;
+                        }
+                    }
+                }
+                
+                // Validate mobile wallet
+                if (paymentMode.value === 'mobile_wallet') {
+                    var walletType = document.querySelector('input[name="mobile_wallet_type"]:checked');
+                    
+                    if (!walletType) {
+                        hasError = true;
+                        alert('Please select a mobile wallet type.');
+                        e.preventDefault();
+                        return false;
+                    }
+                    
+                    // Validate wallet contact for GCash and PayMaya
+                    if ((walletType.value === 'gcash' || walletType.value === 'paymaya') && walletContactInput) {
+                        const error = validateWalletContact(walletContactInput.value);
+                        if (error) {
+                            hasError = true;
+                            showFieldError(walletContactInput, error);
+                            if (!firstError) firstError = walletContactInput;
+                        }
+                    }
+                }
+                
+                if (hasError) {
+                    e.preventDefault();
+                    if (firstError) {
+                        firstError.focus();
+                        firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    return false;
+                }
+            });
+        }
 
         function placeAfter(el, target) {
             try {
@@ -1169,32 +1531,45 @@ require dirname(__DIR__) . '/includes/header.php';
                 }
             }
 
-            // payer name visibility (only when cash upon parking selected)
+            // payer name visibility - show for ALL payment methods (required for cardholder name)
             if (payerNameWrap) {
-                if (sel && sel.value === 'upon_parking') payerNameWrap.style.display = ''; else payerNameWrap.style.display = 'none';
+                if (sel) payerNameWrap.style.display = ''; else payerNameWrap.style.display = 'none';
             }
 
-            // account number visibility: hide for cash payments, show otherwise
+            // account number visibility: hide for cash payments, show for card payments
             if (accountNumberWrap) {
-                if (sel && sel.value === 'upon_parking') accountNumberWrap.style.display = 'none'; else accountNumberWrap.style.display = '';
+                if (sel && (sel.value === 'credit_card' || sel.value === 'debit_card')) {
+                    accountNumberWrap.style.display = '';
+                } else {
+                    accountNumberWrap.style.display = 'none';
+                }
             }
 
             // determine form validity for enabling submit
             var valid = false;
             if (!sel) valid = false; else {
-                if (sel.value === 'upon_parking') {
-                    valid = payerNameInput && payerNameInput.value.trim().length > 0;
+                // All payment methods require payer name
+                var hasPayerName = payerNameInput && payerNameInput.value.trim().length > 0;
+                
+                if (sel.value === 'upon_parking' || sel.value === 'cash') {
+                    valid = hasPayerName;
                 }
                 else if (sel.value === 'credit_card') {
-                    valid = !!document.querySelector('input[name="credit_card_type"]:checked');
+                    var hasCardType = !!document.querySelector('input[name="credit_card_type"]:checked');
+                    var hasAccountNum = accountNumberInput && accountNumberInput.value.trim().length > 0;
+                    valid = hasPayerName && hasCardType && hasAccountNum;
                 } else if (sel.value === 'debit_card') {
-                    valid = !!document.querySelector('input[name="debit_card_type"]:checked');
+                    var hasCardType = !!document.querySelector('input[name="debit_card_type"]:checked');
+                    var hasAccountNum = accountNumberInput && accountNumberInput.value.trim().length > 0;
+                    valid = hasPayerName && hasCardType && hasAccountNum;
                 } else if (sel.value === 'mobile_wallet') {
                     var msel = document.querySelector('input[name="mobile_wallet_type"]:checked');
                     if (!msel) valid = false; else {
                         if (msel.value === 'gcash' || msel.value === 'paymaya') {
-                            valid = walletContactInput && walletContactInput.value.trim().length > 0;
-                        } else valid = true;
+                            valid = hasPayerName && walletContactInput && walletContactInput.value.trim().length > 0;
+                        } else {
+                            valid = hasPayerName;
+                        }
                     }
                 }
             }
@@ -1344,4 +1719,5 @@ require dirname(__DIR__) . '/includes/header.php';
 
     } catch (err) { /* ignore storage errors */ }
 })();
+
 </script>
