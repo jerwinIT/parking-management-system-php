@@ -1,6 +1,7 @@
 <?php
 /**
  * Book a Parking Slot - 3 steps: Select Slot → Choose Time → Confirm
+ * IMPROVED VERSION with Vehicle Double-Booking Prevention
  */
 define('PARKING_ACCESS', true);
 require_once dirname(__DIR__) . '/config/init.php';
@@ -70,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_booking'])) {
                 $error = 'Slot no longer available. Please choose another.';
                 $step = 1;
             } else {
-                // validate booking times against parking operating hours
+                // ===== NEW: Check if vehicle is already booked for overlapping time =====
                 $pd = trim($_POST['parking_date'] ?? '');
                 $st = trim($_POST['start_time'] ?? '');
                 $et = trim($_POST['end_time'] ?? '');
@@ -78,6 +79,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_booking'])) {
                 $exit_dt = null;
                 if ($pd && $st) $entry_dt = $pd . ' ' . (strlen($st) === 5 ? $st . ':00' : substr($st, 0, 8));
                 if ($pd && $et) $exit_dt = $pd . ' ' . (strlen($et) === 5 ? $et . ':00' : substr($et, 0, 8));
+                
+                if ($entry_dt && $exit_dt) {
+                    // Check for overlapping bookings with same vehicle
+                    // Two periods overlap if: existing_start < new_end AND existing_end > new_start
+                    $overlapCheck = $pdo->prepare('
+                        SELECT b.id, ps.slot_number, b.planned_entry_time, b.exit_time
+                        FROM bookings b 
+                        JOIN parking_slots ps ON ps.id = b.parking_slot_id
+                        WHERE b.vehicle_id = ? 
+                        AND b.status IN (?, ?, ?)
+                        AND b.planned_entry_time IS NOT NULL
+                        AND b.exit_time IS NOT NULL
+                        AND b.planned_entry_time < ?
+                        AND b.exit_time > ?
+                    ');
+                    $overlapCheck->execute([
+                        $vehicle_id, 
+                        'pending', 'active', 'confirmed',
+                        $exit_dt,   // Existing must start before new ends
+                        $entry_dt   // Existing must end after new starts
+                    ]);
+                    $overlap = $overlapCheck->fetch();
+                    
+                    if ($overlap) {
+                        $overlap_start = date('g:i A', strtotime($overlap['planned_entry_time']));
+                        $overlap_end = date('g:i A', strtotime($overlap['exit_time']));
+                        $error = 'This vehicle is already booked for ' . htmlspecialchars($overlap_start . ' - ' . $overlap_end) . ' in Slot ' . htmlspecialchars(slotLabel($overlap['slot_number'])) . '. Please select a different vehicle or time.';
+                        $step = 3;
+                        $selected_slot_id = $slot_id;
+                        goto BOOKING_END_SKIP;
+                    }
+                }
+                // ===== END: Vehicle overlap check =====
+                
+                // validate booking times against parking operating hours
                 if (!$entry_dt) $entry_dt = date('Y-m-d H:i:s');
 
                 // Validate date is not in the past
@@ -177,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
         $step = 4;
     } else {
         // Validate payment mode selection
-        $valid_payment_modes = ['cash', 'credit_card', 'debit_card', 'mobile_wallet'];
+        $valid_payment_modes = ['cash', 'credit_card', 'debit_card', 'mobile_wallet', 'upon_parking'];
         if (!in_array($payment_mode, $valid_payment_modes)) {
             $error = 'Invalid payment method selected.';
             $step = 4;
@@ -232,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
             if (empty($debit_card_type)) {
                 $error = 'Please select a debit card type.';
                 $step = 4;
-            } elseif (!in_array($debit_card_type, ['visa', 'mastercard'])) {
+            } elseif (!in_array($debit_card_type, ['visa', 'mastercard', 'visa_debit', 'mastercard_debit', 'local_bank'])) {
                 $error = 'Invalid debit card type selected.';
                 $step = 4;
             }
@@ -243,7 +279,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
             if (empty($mobile_wallet_type)) {
                 $error = 'Please select a mobile wallet type.';
                 $step = 4;
-            } elseif (!in_array($mobile_wallet_type, ['gcash', 'paymaya', 'grabpay', 'shopeepay'])) {
+            } elseif (!in_array($mobile_wallet_type, ['gcash', 'paymaya', 'grabpay', 'shopeepay', 'apple_pay', 'google_pay'])) {
                 $error = 'Invalid mobile wallet type selected.';
                 $step = 4;
             }
@@ -275,7 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
         $current_datetime = date('Y-m-d H:i:s');
         $today_date = date('Y-m-d');
         
-        if ($pd && $pd < $today_date) {
+        if (empty($error) && $pd && $pd < $today_date) {
             $error = 'Cannot book parking for past dates. Please select today or a future date.';
             $step = 4;
         }
@@ -685,101 +721,6 @@ require dirname(__DIR__) . '/includes/header.php';
         </div>
     </div>
     </div>
-    <?php if (!empty($_GET['show_receipt']) && isset($confirmation_booking['amount'])): ?>
-        <?php
-            // prepare receipt values (hourly rate PHP 30, bill in 15-minute increments)
-            $hourly_rate = 30.00;
-            $entry = $confirmation_booking['entry_time'] ?? null;
-            $exit = $confirmation_booking['exit_time'] ?? null;
-            $hours = 0;
-            $duration_mins = 0;
-            if ($entry && $exit) {
-                $duration_mins = max(0, (int) ((strtotime($exit) - strtotime($entry)) / 60));
-                $hours = $duration_mins / 60;
-            }
-            if (isset($confirmation_booking['amount']) && $confirmation_booking['amount'] !== null) {
-                $subtotal = (float)$confirmation_booking['amount'];
-            } else {
-                $min_increment = 15;
-                $billed_mins = max($min_increment, (int) (ceil($duration_mins / $min_increment) * $min_increment));
-                $subtotal = round(($billed_mins / 60) * $hourly_rate, 2);
-            }
-            $loyalty = 0.00;
-            $tax = round($subtotal * 0.12, 2); // example tax
-            $total = round($subtotal - $loyalty + $tax, 2);
-            $slot_label = slotLabel($confirmation_booking['slot_number']);
-        ?>
-        <style>
-        .receipt-wrap { max-width:740px; margin:20px auto; }
-        .receipt-card { border-radius:12px; overflow:hidden; box-shadow:0 6px 18px rgba(16,24,40,0.08); }
-        .receipt-header { background:#10b981; color:white; padding:28px 32px; text-align:center; }
-        .receipt-header h3 { margin:0; font-size:1.35rem; }
-        .receipt-body { background:#f8fafc; padding:24px; }
-        .receipt-section { background:white; border-radius:8px; padding:16px; margin-bottom:12px; }
-        .receipt-row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #eef2f7; }
-        .receipt-row:last-child { border-bottom:0; }
-        .receipt-amount { font-size:1.25rem; font-weight:700; color:#059669; }
-        .receipt-actions { display:flex; gap:8px; justify-content:center; margin-top:12px; }
-        .receipt-actions .btn { padding:10px 18px; }
-        </style>
-
-        <div class="receipt-wrap">
-            <div class="receipt-card">
-                <div class="receipt-header">
-                    <h3>Payment Confirmed</h3>
-                    <div style="opacity:0.95; margin-top:8px;">Your parking session has been completed successfully</div>
-                </div>
-                <div class="receipt-body">
-                    <div class="receipt-section d-flex justify-content-between align-items-center">
-                        <div>
-                            <div style="font-size:0.95rem;color:#6b7280;">TRANSACTION ID</div>
-                            <div style="font-weight:700;">PK-<?= str_pad((int)$confirmation_booking['id'] ?? 0, 6, '0', STR_PAD_LEFT) ?></div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:0.95rem;color:#6b7280;">DATE & TIME</div>
-                            <div style="font-weight:700;"><?= $confirmation_booking['paid_at'] ? date('F j, Y \a\t g:i A', strtotime($confirmation_booking['paid_at'])) : ($confirmation_booking['entry_time'] ? date('F j, Y \a\t g:i A', strtotime($confirmation_booking['entry_time'])) : date('F j, Y \a\t g:i A')) ?></div>
-                        </div>
-                    </div>
-
-                    <div class="receipt-section">
-                        <h6 style="margin:0 0 8px 0;">Parking Details</h6>
-                        <div class="d-flex justify-content-between"><div style="color:#6b7280;">Slot Location</div><div><strong><?= htmlspecialchars($slot_label) ?></strong></div></div>
-                        <div class="d-flex justify-content-between"><div style="color:#6b7280;">Parking Duration</div><div><strong><?= $hours ? round($hours,2).'h' : '—' ?></strong></div></div>
-                    </div>
-
-                    <div class="receipt-section">
-                        <h6 style="margin:0 0 8px 0;">Vehicle Information</h6>
-                        <div class="d-flex justify-content-between"><div style="color:#6b7280;">Vehicle</div><div><strong><?= htmlspecialchars($confirmation_booking['model'] ?? '—') ?></strong></div></div>
-                        <div class="d-flex justify-content-between"><div style="color:#6b7280;">License Plate</div><div><strong><?= htmlspecialchars($confirmation_booking['plate_number'] ?? '—') ?></strong></div></div>
-                    </div>
-
-                    <div class="receipt-section">
-                        <h6 style="margin:0 0 8px 0;">Pricing Breakdown</h6>
-                        <div class="receipt-row"><div style="color:#6b7280;">Hourly Rate</div><div>&#8369;<?= number_format($hourly_rate,2) ?></div></div>
-                        <div class="receipt-row"><div style="color:#6b7280;">Hours Parked</div><div><?= $hours ? round($hours,2) : '0.00' ?></div></div>
-                        <div class="receipt-row"><div style="color:#6b7280;">Subtotal</div><div>&#8369;<?= number_format($subtotal,2) ?></div></div>
-                        <div class="receipt-row"><div style="color:#6b7280;">Loyalty Discount</div><div>&#8369;<?= number_format($loyalty,2) ?></div></div>
-                        <div class="receipt-row"><div style="color:#6b7280;">Tax (12%)</div><div>&#8369;<?= number_format($tax,2) ?></div></div>
-                        <div class="receipt-row" style="border-top:1px solid #eef2f7; padding-top:10px;"><div style="font-weight:700;">Total Amount</div><div class="receipt-amount">&#8369;<?= number_format($total,2) ?></div></div>
-                    </div>
-
-                    <div class="receipt-section">
-                        <div style="color:#6b7280;">Payment Method</div>
-                        <div style="margin-top:8px; display:flex; align-items:center; gap:12px;">
-                            <div style="background:#ecfccb; padding:10px 12px; border-radius:8px; color:#065f46; font-weight:700;"><?= htmlspecialchars(ucwords(str_replace('_',' ',$confirmation_booking['payment_method'] ?? '—'))) ?></div>
-                            <div style="color:#6b7280;"><?= htmlspecialchars($confirmation_booking['payment_subtype'] ?? ($confirmation_booking['account_number'] ?? '—')) ?></div>
-                        </div>
-                    </div>
-
-                    <div class="receipt-actions">
-                        <a href="#" onclick="window.print();return false;" class="btn btn-outline-secondary">Print Receipt</a>
-                        <a href="#" class="btn btn-outline-secondary">Download PDF</a>
-                        <a href="<?= BASE_URL ?>/index.php" class="btn btn-success">Back to Dashboard</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    <?php endif; ?>
 
 <?php elseif (empty($vehicles)): ?>
     <div class="confirmation-center">
@@ -1042,6 +983,38 @@ require dirname(__DIR__) . '/includes/header.php';
     if (!empty($start_time)) $backParams['start_time'] = $start_time;
     if (!empty($end_time)) $backParams['end_time'] = $end_time;
     $backUrl = BASE_URL . '/user/book.php?' . http_build_query($backParams);
+    
+    // Check which vehicles have conflicts for the selected time
+    $vehicle_conflicts = [];
+    if ($parking_date && $start_time && $end_time) {
+        $entry_dt = $parking_date . ' ' . (strlen($start_time) === 5 ? $start_time . ':00' : substr($start_time, 0, 8));
+        $exit_dt = $parking_date . ' ' . (strlen($end_time) === 5 ? $end_time . ':00' : substr($end_time, 0, 8));
+        
+        foreach ($vehicles as $v) {
+            $conflictCheck = $pdo->prepare('
+                SELECT b.id, ps.slot_number, b.planned_entry_time, b.exit_time
+                FROM bookings b 
+                JOIN parking_slots ps ON ps.id = b.parking_slot_id
+                WHERE b.vehicle_id = ? 
+                AND b.status IN (?, ?, ?)
+                AND b.planned_entry_time IS NOT NULL
+                AND b.exit_time IS NOT NULL
+                AND b.planned_entry_time < ?
+                AND b.exit_time > ?
+                LIMIT 1
+            ');
+            $conflictCheck->execute([$v['id'], 'pending', 'active', 'confirmed', $exit_dt, $entry_dt]);
+            $conflict = $conflictCheck->fetch();
+            
+            if ($conflict) {
+                $vehicle_conflicts[$v['id']] = [
+                    'slot' => slotLabel($conflict['slot_number']),
+                    'start' => date('g:i A', strtotime($conflict['planned_entry_time'])),
+                    'end' => date('g:i A', strtotime($conflict['exit_time']))
+                ];
+            }
+        }
+    }
     ?>
     <!-- Step 3: Confirm -->
     <div class="card border-0 shadow-sm">
@@ -1051,21 +1024,42 @@ require dirname(__DIR__) . '/includes/header.php';
             <?php if ($parking_date || $start_time || $end_time): ?>
             <p class="mb-2 text-muted small">Date: <?= htmlspecialchars($display_date) ?> · Start: <?= htmlspecialchars($display_start) ?> · End: <?= htmlspecialchars($display_end) ?></p>
             <?php endif; ?>
-            <form method="get" action="<?= BASE_URL ?>/user/book.php">
+            
+            <?php if (!empty($vehicle_conflicts)): ?>
+            <div class="alert alert-warning" style="background:#fff7ed;border:1px solid #fed7aa;color:#92400e;border-radius:8px;padding:12px;margin-bottom:1rem;">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                <strong>Note:</strong> Some of your vehicles are already booked during this time. They are marked below.
+            </div>
+            <?php endif; ?>
+            
+            <form method="get" action="<?= BASE_URL ?>/user/book.php" id="vehicleSelectionForm">
                 <input type="hidden" name="step" value="4">
                 <input type="hidden" name="slot_id" value="<?= $selected_slot_id ?>">
                 <?php if ($parking_date): ?><input type="hidden" name="parking_date" value="<?= htmlspecialchars($parking_date) ?>"><?php endif; ?>
                 <?php if ($start_time): ?><input type="hidden" name="start_time" value="<?= htmlspecialchars($start_time) ?>"><?php endif; ?>
                 <?php if ($end_time): ?><input type="hidden" name="end_time" value="<?= htmlspecialchars($end_time) ?>"><?php endif; ?>
                 <div class="mb-4">
-                    <label class="form-label">Select Vehicle</label>
-                    <select name="vehicle_id" class="form-select" required>
+                    <label class="form-label fw-semibold">Select Vehicle</label>
+                    <select name="vehicle_id" id="vehicleSelect" class="form-select" required style="padding:0.75rem 1rem;border-radius:8px;">
                         <option value="">-- Choose car --</option>
                         <?php foreach ($vehicles as $v): ?>
-                            <option value="<?= $v['id'] ?>"><?= htmlspecialchars($v['plate_number']) ?> (<?= htmlspecialchars($v['model'] ?? 'N/A') ?>)</option>
+                            <?php 
+                            $has_conflict = isset($vehicle_conflicts[$v['id']]);
+                            $conflict_info = $has_conflict ? $vehicle_conflicts[$v['id']] : null;
+                            ?>
+                            <option value="<?= $v['id'] ?>" <?= $has_conflict ? 'disabled' : '' ?> data-conflict="<?= $has_conflict ? '1' : '0' ?>">
+                                <?= htmlspecialchars($v['plate_number']) ?> (<?= htmlspecialchars($v['model'] ?? 'N/A') ?>)<?= $has_conflict ? ' - Already booked ' . $conflict_info['start'] . '-' . $conflict_info['end'] . ' at Slot ' . $conflict_info['slot'] : '' ?>
+                            </option>
                         <?php endforeach; ?>
                     </select>
+                    <small class="form-text text-muted">Vehicles already booked during this time are unavailable</small>
                 </div>
+                
+                <div id="conflictAlert" class="alert alert-danger" style="display:none;margin-top:1rem;border-radius:8px;">
+                    <i class="bi bi-exclamation-circle-fill me-2"></i>
+                    <span id="conflictMessage"></span>
+                </div>
+                
                 <div class="d-flex justify-content-between gap-2">
                     <a href="<?= htmlspecialchars($backUrl) ?>" class="btn btn-outline-secondary rounded-3 px-4">Back</a>
                     <button type="submit" class="btn btn-success rounded-3 px-4">Proceed to Payment</button>
@@ -1073,6 +1067,49 @@ require dirname(__DIR__) . '/includes/header.php';
             </form>
         </div>
     </div>
+    
+    <style>
+    #vehicleSelect option:disabled {
+        color: #9ca3af;
+        background: #f3f4f6;
+    }
+    </style>
+    
+    <script>
+    (function() {
+        var form = document.getElementById('vehicleSelectionForm');
+        var select = document.getElementById('vehicleSelect');
+        var alert = document.getElementById('conflictAlert');
+        var message = document.getElementById('conflictMessage');
+        
+        if (form && select) {
+            select.addEventListener('change', function() {
+                var selectedOption = this.options[this.selectedIndex];
+                if (selectedOption && selectedOption.getAttribute('data-conflict') === '1') {
+                    var optionText = selectedOption.textContent;
+                    var conflictMatch = optionText.match(/Already booked (.+)/);
+                    if (conflictMatch) {
+                        message.textContent = 'This vehicle is ' + conflictMatch[0].toLowerCase() + '. Please select a different vehicle.';
+                        alert.style.display = 'block';
+                    }
+                } else {
+                    alert.style.display = 'none';
+                }
+            });
+            
+            // Prevent form submission if conflict vehicle selected
+            form.addEventListener('submit', function(e) {
+                var selectedOption = select.options[select.selectedIndex];
+                if (selectedOption && selectedOption.getAttribute('data-conflict') === '1') {
+                    e.preventDefault();
+                    message.textContent = 'Please select a vehicle that is not already booked.';
+                    alert.style.display = 'block';
+                    alert.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            });
+        }
+    })();
+    </script>
 <?php else: ?>
 <?php endif; ?>
 </div>
@@ -1427,8 +1464,8 @@ require dirname(__DIR__) . '/includes/header.php';
                     return false;
                 }
                 
-                // Validate payer name for ALL payment methods (required for all)
-                if (payerNameInput && payerNameWrap && payerNameWrap.style.display !== 'none') {
+                // Validate payer name - required for ALL payment methods
+                if (payerNameInput) {
                     const error = validatePayerName(payerNameInput.value);
                     if (error) {
                         hasError = true;
@@ -1437,7 +1474,7 @@ require dirname(__DIR__) . '/includes/header.php';
                     }
                 }
                 
-                // Validate account number for credit/debit cards
+                // Validate account number for credit/debit cards only
                 if (paymentMode.value === 'credit_card' || paymentMode.value === 'debit_card') {
                     // Check card type selection
                     var cardTypeInput = paymentMode.value === 'credit_card' 
@@ -1472,7 +1509,7 @@ require dirname(__DIR__) . '/includes/header.php';
                         return false;
                     }
                     
-                    // Validate wallet contact for GCash and PayMaya
+                    // Validate wallet contact for GCash and PayMaya only
                     if ((walletType.value === 'gcash' || walletType.value === 'paymaya') && walletContactInput) {
                         const error = validateWalletContact(walletContactInput.value);
                         if (error) {
@@ -1483,6 +1520,7 @@ require dirname(__DIR__) . '/includes/header.php';
                     }
                 }
                 
+                // If there are errors, prevent submission
                 if (hasError) {
                     e.preventDefault();
                     if (firstError) {
@@ -1491,6 +1529,9 @@ require dirname(__DIR__) . '/includes/header.php';
                     }
                     return false;
                 }
+                
+                // Allow submission if no errors
+                return true;
             });
         }
 
@@ -1547,30 +1588,43 @@ require dirname(__DIR__) . '/includes/header.php';
 
             // determine form validity for enabling submit
             var valid = false;
-            if (!sel) valid = false; else {
+            if (!sel) {
+                valid = false;
+            } else {
                 // All payment methods require payer name
                 var hasPayerName = payerNameInput && payerNameInput.value.trim().length > 0;
                 
-                if (sel.value === 'upon_parking' || sel.value === 'cash') {
+                if (sel.value === 'upon_parking') {
+                    // Cash upon parking: only needs payer name
                     valid = hasPayerName;
                 }
                 else if (sel.value === 'credit_card') {
                     var hasCardType = !!document.querySelector('input[name="credit_card_type"]:checked');
-                    var hasAccountNum = accountNumberInput && accountNumberInput.value.trim().length > 0;
+                    var hasAccountNum = accountNumberInput && accountNumberInput.value.trim().length >= 10;
                     valid = hasPayerName && hasCardType && hasAccountNum;
-                } else if (sel.value === 'debit_card') {
+                } 
+                else if (sel.value === 'debit_card') {
                     var hasCardType = !!document.querySelector('input[name="debit_card_type"]:checked');
-                    var hasAccountNum = accountNumberInput && accountNumberInput.value.trim().length > 0;
+                    var hasAccountNum = accountNumberInput && accountNumberInput.value.trim().length >= 10;
                     valid = hasPayerName && hasCardType && hasAccountNum;
-                } else if (sel.value === 'mobile_wallet') {
+                } 
+                else if (sel.value === 'mobile_wallet') {
                     var msel = document.querySelector('input[name="mobile_wallet_type"]:checked');
-                    if (!msel) valid = false; else {
+                    if (!msel) {
+                        valid = false;
+                    } else {
                         if (msel.value === 'gcash' || msel.value === 'paymaya') {
+                            // GCash/PayMaya: need payer name + wallet contact
                             valid = hasPayerName && walletContactInput && walletContactInput.value.trim().length > 0;
                         } else {
+                            // Other wallets: just need payer name
                             valid = hasPayerName;
                         }
                     }
+                }
+                else {
+                    // Default: just need payer name
+                    valid = hasPayerName;
                 }
             }
             if (submitBtn) submitBtn.disabled = !valid;
@@ -1627,6 +1681,10 @@ require dirname(__DIR__) . '/includes/header.php';
         // react to payer name input
         if (payerNameInput) {
             payerNameInput.addEventListener('input', function(){ updateInstructionsVisibility(); });
+        }
+        // react to account number input
+        if (accountNumberInput) {
+            accountNumberInput.addEventListener('input', function(){ updateInstructionsVisibility(); });
         }
 
         // set initial visibility on load

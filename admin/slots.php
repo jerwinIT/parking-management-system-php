@@ -40,6 +40,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Debug logging
         error_log("HOURS UPDATE - Opening: '$opening_time', Closing: '$closing_time'");
         
+        // Validate that opening and closing times are not equal
+        if ($opening_time === $closing_time) {
+            setAlert('Opening and closing times cannot be the same.', 'danger');
+            header('Location: ' . BASE_URL . '/admin/slots.php');
+            exit;
+        }
+        
+        // Validate that the time span does not exceed 16 hours
+        // Use today's date as a reference for proper time calculation
+        $today = date('Y-m-d');
+        $opening_timestamp = strtotime($today . ' ' . $opening_time);
+        $closing_timestamp = strtotime($today . ' ' . $closing_time);
+        
+        // Debug: Log the timestamps
+        error_log("HOURS UPDATE - Opening timestamp: $opening_timestamp (" . date('Y-m-d H:i:s', $opening_timestamp) . ")");
+        error_log("HOURS UPDATE - Closing timestamp: $closing_timestamp (" . date('Y-m-d H:i:s', $closing_timestamp) . ")");
+        
+        // Calculate the difference in hours
+        $diff_seconds = $closing_timestamp - $opening_timestamp;
+        
+        // If closing time is earlier than opening time, it means it's next day
+        if ($diff_seconds < 0) {
+            $diff_seconds += 24 * 3600; // Add 24 hours
+        }
+        
+        $diff_hours = $diff_seconds / 3600;
+        
+        // Debug: Log the calculated hours
+        error_log("HOURS UPDATE - Calculated hours: $diff_hours");
+        
+        // Validate minimum of 1 hour (to catch any edge cases where times might be equal)
+        if ($diff_hours < 1) {
+            setAlert('Operating hours must be at least 1 hour.', 'danger');
+            header('Location: ' . BASE_URL . '/admin/slots.php');
+            exit;
+        }
+        
+        if ($diff_hours > 16) {
+            setAlert('Operating hours cannot exceed 16 hours. Please adjust the closing time.', 'danger');
+            header('Location: ' . BASE_URL . '/admin/slots.php');
+            exit;
+        }
+        
         // FIXED: Check if row exists, if not insert it
         $checkRow = $pdo->query('SELECT COUNT(*) FROM parking_settings')->fetchColumn();
         error_log("HOURS UPDATE - Rows in parking_settings: $checkRow");

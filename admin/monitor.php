@@ -1,6 +1,7 @@
 <?php
 /**
  * Admin - Monitor all vehicles inside the parking area (current parked)
+ * IMPROVED VERSION: Shows scheduled date/time and disables Parked button for non-today bookings
  */
 define('PARKING_ACCESS', true);
 require_once dirname(__DIR__) . '/config/init.php';
@@ -45,11 +46,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     
     if ($action === 'mark_parked' && $booking_id) {
         // Mark booking as parked and set actual entry_time to now
-        $stmt = $pdo->prepare('SELECT status, parking_slot_id FROM bookings WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT status, parking_slot_id, planned_entry_time FROM bookings WHERE id = ?');
         $stmt->execute([$booking_id]);
         $booking = $stmt->fetch();
         
         if ($booking && $booking['status'] === 'pending') {
+            // Check if booking is for today
+            $planned_date = $booking['planned_entry_time'] ? date('Y-m-d', strtotime($booking['planned_entry_time'])) : null;
+            $today = date('Y-m-d');
+            
+            if ($planned_date !== $today) {
+                echo json_encode(['success' => false, 'message' => 'This booking is scheduled for ' . date('F j, Y', strtotime($booking['planned_entry_time'])) . '. Cannot mark as parked today.']);
+                exit;
+            }
+            
             try {
                 $pdo->beginTransaction();
                 $pdo->prepare('UPDATE bookings SET status = ?, entry_time = NOW() WHERE id = ?')->execute(['parked', $booking_id]);
@@ -92,15 +102,6 @@ $filter = $_GET['filter'] ?? 'all';
 if (!in_array($filter, ['all', 'parked', 'pending'])) {
     $filter = 'all';
 }
-
-// REMOVED: Auto-end logic that was causing parked vehicles to end prematurely
-// The original logic compared total parking duration to operating hours,
-// which incorrectly ended overnight or long-term parking sessions.
-// 
-// If you need auto-end functionality, consider:
-// 1. Adding a 'planned_exit_time' or 'duration_hours' column to bookings table
-// 2. Implementing a scheduled task (cron job) instead of running on page load
-// 3. Manually ending parking sessions from the monitor interface
 
 // Build query based on filter
 $where_clause = '';
@@ -330,14 +331,6 @@ require dirname(__DIR__) . '/includes/header.php';
         box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
         transform: translateY(-4px);
         border-color: #d1d5db;
-        overflow: hidden;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    .vehicle-card:hover {
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
-        border-color: #d1d5db;
-        transform: translateY(-4px);
     }
 
     .card-header-top {
@@ -386,6 +379,12 @@ require dirname(__DIR__) . '/includes/header.php';
         background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
         color: #92400e;
         box-shadow: 0 3px 12px rgba(245, 158, 11, 0.2);
+    }
+    
+    .status-badge.future {
+        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+        color: #1e40af;
+        box-shadow: 0 3px 12px rgba(59, 130, 246, 0.2);
     }
 
     .card-content {
@@ -442,6 +441,29 @@ require dirname(__DIR__) . '/includes/header.php';
         font-weight: 700;
         font-size: 1rem;
     }
+    
+    .scheduled-info {
+        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+        border-left: 3px solid #3b82f6;
+        padding: 0.75rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+    }
+    
+    .scheduled-label {
+        font-size: 0.7rem;
+        color: #1e40af;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.35rem;
+    }
+    
+    .scheduled-value {
+        color: #1e40af;
+        font-weight: 700;
+        font-size: 0.95rem;
+    }
 
     .card-actions {
         display: flex;
@@ -494,10 +516,18 @@ require dirname(__DIR__) . '/includes/header.php';
         box-shadow: 0 4px 14px rgba(22, 163, 74, 0.3);
     }
 
-    .btn-parked:hover {
+    .btn-parked:hover:not(:disabled) {
         background: linear-gradient(135deg, #15803d 0%, #166d31 100%);
         box-shadow: 0 8px 20px rgba(22, 163, 74, 0.4);
         transform: translateY(-3px);
+    }
+    
+    .btn-parked:disabled {
+        background: #d1d5db;
+        color: #9ca3af;
+        cursor: not-allowed;
+        box-shadow: none;
+        opacity: 0.6;
     }
 
     .btn-end {
@@ -552,13 +582,6 @@ require dirname(__DIR__) . '/includes/header.php';
         color: #fff;
         border-color: #16a34a;
         box-shadow: 0 6px 16px rgba(22, 163, 74, 0.3);
-    }
-
-    .filter-tab.active {
-        background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
-        color: #fff;
-        border-color: #16a34a;
-        box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
     }
 </style>
 
@@ -621,6 +644,19 @@ require dirname(__DIR__) . '/includes/header.php';
             }
             $time_in = $is_parked && $v['entry_time'] ? date('g:i A', strtotime($v['entry_time'])) : date('g:i A', strtotime($v['booked_at']));
             $time_label = $is_parked ? 'Time In' : 'Booked At';
+            
+            // ===== NEW: Check if booking is for today =====
+            $planned_date = $v['planned_entry_time'] ? date('Y-m-d', strtotime($v['planned_entry_time'])) : null;
+            $today = date('Y-m-d');
+            $is_today = ($planned_date === $today);
+            $is_future = ($planned_date && $planned_date > $today);
+            
+            // Format planned date and time
+            $planned_date_display = $v['planned_entry_time'] ? date('M j, Y', strtotime($v['planned_entry_time'])) : '—';
+            $planned_time_start = $v['planned_entry_time'] ? date('g:i A', strtotime($v['planned_entry_time'])) : '—';
+            $planned_time_end = $v['exit_time'] ? date('g:i A', strtotime($v['exit_time'])) : '—';
+            $planned_time_display = ($planned_time_start !== '—' && $planned_time_end !== '—') ? $planned_time_start . ' - ' . $planned_time_end : $planned_time_start;
+            // ===== END: Booking date check =====
         ?>
             <div class="vehicle-card" data-booking-id="<?= $v['booking_id'] ?>">
                 <div class="card-header-top">
@@ -628,8 +664,8 @@ require dirname(__DIR__) . '/includes/header.php';
                         <div class="vehicle-title"><?= htmlspecialchars($v['model'] ?? 'Unknown') ?></div>
                         <div class="vehicle-plate"><?= htmlspecialchars($v['plate_number']) ?></div>
                     </div>
-                        <span class="status-badge status-badge-<?= $v['booking_id'] ?> <?= $is_parked ? 'parked' : 'not-yet' ?>">
-                            <?= $is_parked ? 'Parked' : 'Not Yet Parked' ?>
+                        <span class="status-badge status-badge-<?= $v['booking_id'] ?> <?= $is_parked ? 'parked' : ($is_future ? 'future' : 'not-yet') ?>">
+                            <?= $is_parked ? 'Parked' : ($is_future ? 'Scheduled' : 'Not Yet Parked') ?>
                     </span>
                 </div>
 
@@ -646,29 +682,41 @@ require dirname(__DIR__) . '/includes/header.php';
                         <span class="info-label">Location:</span>
                         <span class="info-value location-badge"><?= htmlspecialchars($v['slot_number']) ?></span>
                     </div>
-                    <div class="info-row">
-                        <span class="info-label">Time In</span>
-                        <span class="info-value time-value time-value-<?= $v['booking_id'] ?>"><?= $time_in ?></span>
-                    </div>
+                    
                     <?php if ($is_parked): ?>
-                    <div class="info-row">
-                        <span class="info-label">Duration</span>
-                        <span class="info-value duration-value duration-value-<?= $v['booking_id'] ?>"><?= htmlspecialchars($duration) ?></span>
-                    </div>
+                        <!-- For parked vehicles: show actual time in -->
+                        <div class="info-row">
+                            <span class="info-label">Time In</span>
+                            <span class="info-value time-value time-value-<?= $v['booking_id'] ?>"><?= $time_in ?></span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Duration</span>
+                            <span class="info-value duration-value duration-value-<?= $v['booking_id'] ?>"><?= htmlspecialchars($duration) ?></span>
+                        </div>
+                    <?php else: ?>
+                        <!-- For not-yet-parked vehicles: show scheduled date and time -->
+                        <div class="info-row" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left: 3px solid #3b82f6;">
+                            <span class="info-label" style="color: #1e40af;">Scheduled Date</span>
+                            <span class="info-value" style="color: #1e40af; font-weight: 800;"><?= htmlspecialchars($planned_date_display) ?></span>
+                        </div>
+                        <div class="info-row" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left: 3px solid #3b82f6;">
+                            <span class="info-label" style="color: #1e40af;">Scheduled Time</span>
+                            <span class="info-value time-value-<?= $v['booking_id'] ?>" style="color: #1e40af; font-weight: 800;"><?= htmlspecialchars($planned_time_display) ?></span>
+                        </div>
                     <?php endif; ?>
                 </div>
 
                 <div class="card-actions">
                     <a href="#" class="btn-view" onclick="showVehicleModal(<?= $v['booking_id'] ?>); return false;">
-                        <i class="bi bi-eye"></i> View
+                        <i class="bi bi-eye"></i> VIEW
                     </a>
                     <?php if (!$is_parked): ?>
-                            <button type="button" class="btn-parked btn-mark-park" data-booking-id="<?= $v['booking_id'] ?>" onclick="handleMarkParked(event, <?= $v['booking_id'] ?>)">
-                                <i class="bi bi-check-circle-fill"></i> Parked
+                            <button type="button" class="btn-parked btn-mark-park" data-booking-id="<?= $v['booking_id'] ?>" onclick="handleMarkParked(event, <?= $v['booking_id'] ?>)" <?= !$is_today ? 'disabled title="Booking is scheduled for ' . htmlspecialchars($planned_date_display) . '. Cannot mark as parked until that date."' : '' ?>>
+                                <i class="bi bi-check-circle-fill"></i> PARKED
                     </button>
                     <?php else: ?>
                             <a href="#" class="btn-end btn-end-parking" data-booking-id="<?= $v['booking_id'] ?>" onclick="handleEndParking(event, <?= $v['booking_id'] ?>);">
-                                <i class="bi bi-x-circle-fill"></i> End
+                                <i class="bi bi-x-circle-fill"></i> END
                             </a>
                     <?php endif; ?>
                 </div>
@@ -681,6 +729,16 @@ require dirname(__DIR__) . '/includes/header.php';
 <script>
 function handleMarkParked(e, bookingId) {
     e.preventDefault();
+    
+    // Check if button is disabled
+    if (e.target.disabled || e.target.closest('button').disabled) {
+        const title = e.target.getAttribute('title') || e.target.closest('button').getAttribute('title');
+        if (title) {
+            alert(title);
+        }
+        return;
+    }
+    
     if (!confirm('Mark vehicle as parked?')) return;
     
     const formData = new FormData();
@@ -700,25 +758,33 @@ function handleMarkParked(e, bookingId) {
                 const badgeEl = card.querySelector(`.status-badge-${bookingId}`);
                 if (badgeEl) {
                     badgeEl.textContent = 'Parked';
-                    badgeEl.classList.remove('not-yet');
+                    badgeEl.classList.remove('not-yet', 'future');
                     badgeEl.classList.add('parked');
                 }
                 
-                // Update time in
-                const timeEl = card.querySelector(`.time-value-${bookingId}`);
-                if (timeEl) {
-                    const now = new Date();
-                    timeEl.textContent = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-                }
+                // Remove scheduled date/time rows and add actual time in
+                const cardContent = card.querySelector('.card-content');
+                const scheduledRows = cardContent.querySelectorAll('.info-row[style*="eff6ff"]');
+                scheduledRows.forEach(row => row.remove());
                 
-                // Replace Parked button with End button
+                // Add Time In row
+                const now = new Date();
+                const timeInRow = document.createElement('div');
+                timeInRow.className = 'info-row';
+                timeInRow.innerHTML = `
+                    <span class="info-label">Time In</span>
+                    <span class="info-value time-value time-value-${bookingId}">${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+                `;
+                cardContent.appendChild(timeInRow);
+                
+                // Replace button from "NOT YET PARKED" to "END"
                 const actionsDiv = card.querySelector('.card-actions');
                 const parkedBtn = actionsDiv.querySelector('.btn-mark-park');
                 const endBtn = document.createElement('a');
                 endBtn.href = '#';
                 endBtn.className = 'btn-end btn-end-parking';
                 endBtn.setAttribute('data-booking-id', bookingId);
-                endBtn.innerHTML = '<i class="bi bi-x-circle-fill"></i> End';
+                endBtn.innerHTML = '<i class="bi bi-x-circle-fill"></i> END';
                 endBtn.onclick = (e) => handleEndParking(e, bookingId);
                 if (parkedBtn) {
                     parkedBtn.replaceWith(endBtn);
@@ -747,7 +813,7 @@ function handleMarkParked(e, bookingId) {
                                 durationValue.className = 'info-value duration-value duration-value-' + bookingId;
                                 durationValue.textContent = durationText;
                                 durationRow.appendChild(durationValue);
-                                card.querySelector('.card-content').appendChild(durationRow);
+                                cardContent.appendChild(durationRow);
                             }
                         }
                     })

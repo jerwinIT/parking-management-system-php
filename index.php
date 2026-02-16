@@ -23,13 +23,10 @@ $total_slots = (int) $pdo->query('SELECT COUNT(*) FROM parking_slots')->fetchCol
 // count maintenance slots (if any)
 $maintenance = (int) $pdo->query("SELECT COUNT(*) FROM parking_slots WHERE status = 'maintenance'")->fetchColumn();
 
-// FIXED: Get accurate counts from the database
-// Available slots = slots not in maintenance and not currently booked
 
 // Occupied slots = currently active bookings (status 'parked' or 'pending')
 $occupied = $pdo->query("SELECT COUNT(*) FROM bookings WHERE status IN ('parked', 'pending')")->fetchColumn();
 
-// Available = total slots minus maintenance minus occupied
 // Available = total slots minus maintenance minus occupied
 $available = $total_slots - $maintenance - $occupied;
 if ($available < 0) $available = 0;

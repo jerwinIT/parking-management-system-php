@@ -316,7 +316,7 @@ try {
         <div class="container">
             <div class="row align-items-center g-4">
                 <div class="col-lg-6 hero-content">
-                    <h1>Gea to the Parking Management System</h1>
+                    <h1>Welcome to ParkIt</h1>
                     <p class="lead">Track parking slots, manage vehicles, book in seconds, and handle payments in one place. Drivers get a simple dashboard; admins have full control.</p>
                     <p class="tagline">Fast. Simple. Secure parking management.</p>
                     <div class="hero-cta">
