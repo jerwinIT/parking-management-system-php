@@ -219,8 +219,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
             $step = 4;
         }
         
-        // Validate payer name - required, letters and spaces only, no special characters
-        if (empty($error)) {
+        // Validate payer name - required for card/wallet payments, optional for cash upon parking
+        if (empty($error) && $payment_mode !== 'upon_parking') {
             if (empty($payer_name)) {
                 $error = 'Payer name is required.';
                 $step = 4;
@@ -370,9 +370,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
                 $error = 'Please enter your mobile account or reference for the selected wallet.'; $step = 4;
             }
         } elseif ($payment_mode === 'upon_parking') {
-            // cash upon parking requires payer name
+            // cash upon parking - payer name is optional
             $payment_subtype = null;
-            if (!$payer_name) { $error = 'Please enter payer name for cash payments.'; $step = 4; }
         } else {
             $payment_subtype = null;
         }
@@ -1320,15 +1319,15 @@ require dirname(__DIR__) . '/includes/header.php';
                     <input type="text" id="walletContact" name="wallet_contact" class="form-control" placeholder="Phone number or transaction reference">
                 </div>
 
-                <div id="accountNumberWrap" class="mb-3 mt-3">
+                <div id="accountNumberWrap" class="mb-3 mt-3" style="display:none;">
                     <label class="form-label">Card Number <span class="text-danger">*</span></label>
-                    <input type="text" name="account_number" id="accountNumber" class="form-control" placeholder="Enter card number (10-19 digits)" maxlength="19" required>
+                    <input type="text" name="account_number" id="accountNumber" class="form-control" placeholder="Enter card number (10-19 digits)" maxlength="19">
                     <small class="form-text text-muted">Enter your credit/debit card number</small>
                 </div>
                 <div id="payerNameWrap" class="mb-3" style="display:none;">
                     <label class="form-label">Full Name (Cardholder/Payer Name) <span class="text-danger">*</span></label>
-                    <input type="text" id="payerName" name="payer_name" class="form-control" placeholder="Enter full name as shown on card/ID" required>
-                    <small class="form-text text-muted">Required for all payment methods</small>
+                    <input type="text" id="payerName" name="payer_name" class="form-control" placeholder="Enter full name as shown on card/ID">
+                    <small class="form-text text-muted">Required for card and wallet payments</small>
                 </div>
 
                 <div class="payment-actions">
@@ -1464,8 +1463,8 @@ require dirname(__DIR__) . '/includes/header.php';
                     return false;
                 }
                 
-                // Validate payer name - required for ALL payment methods
-                if (payerNameInput) {
+                // Validate payer name - required for card/wallet payments only
+                if (payerNameInput && paymentMode.value !== 'upon_parking') {
                     const error = validatePayerName(payerNameInput.value);
                     if (error) {
                         hasError = true;
@@ -1572,9 +1571,9 @@ require dirname(__DIR__) . '/includes/header.php';
                 }
             }
 
-            // payer name visibility - show for ALL payment methods (required for cardholder name)
+            // payer name visibility - show only for card/wallet payments (not needed for cash upon parking)
             if (payerNameWrap) {
-                if (sel) payerNameWrap.style.display = ''; else payerNameWrap.style.display = 'none';
+                if (sel && sel.value !== 'upon_parking') payerNameWrap.style.display = ''; else payerNameWrap.style.display = 'none';
             }
 
             // account number visibility: hide for cash payments, show for card payments
@@ -1595,8 +1594,8 @@ require dirname(__DIR__) . '/includes/header.php';
                 var hasPayerName = payerNameInput && payerNameInput.value.trim().length > 0;
                 
                 if (sel.value === 'upon_parking') {
-                    // Cash upon parking: only needs payer name
-                    valid = hasPayerName;
+                    // Cash upon parking: no additional fields required
+                    valid = true;
                 }
                 else if (sel.value === 'credit_card') {
                     var hasCardType = !!document.querySelector('input[name="credit_card_type"]:checked');
