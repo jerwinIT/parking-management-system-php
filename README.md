@@ -124,6 +124,24 @@ After login:
 - **No double booking**: Only available slots can be selected; slot status updated in transaction
 - **Parking duration**: Calculated from entry/exit and shown in history and monitor
 
+- **Dashboard widgets**: Total Slots, Currently Parked (real-time), Active Reservations (upcoming)
+  
+---
+
+## Time-based bookings & scheduler
+
+- The system now supports multiple time-based reservations per slot (same day). Slot occupancy is derived from booking time windows (`planned_entry_time` / `exit_time`) rather than a single-day lock on the slot.
+- Helper functions live in `config/booking_helpers.php` and are included automatically via `config/init.php`.
+- Two scheduler scripts are provided in `scripts/`:
+	- `auto_start_bookings.php`: transitions bookings with `planned_entry_time <= NOW()` from `pending|confirmed` to `parked` and sets `entry_time = NOW()`. Run every minute (cron or Task Scheduler). Supports `--dry-run` to preview actions.
+	- `auto_end_bookings.php`: existing script that auto-ends parked bookings based on their planned duration; keep running on a schedule as your environment requires.
+- Dashboard metric definitions:
+	- **Total Slots**: COUNT of `parking_slots`
+	- **Currently Parked**: COUNT of `bookings` where `status = 'parked'`
+	- **Active Reservations**: COUNT of `bookings` where `status IN ('pending','confirmed')` (upcoming reservations)
+
+---
+
 ---
 
 ## Default Parking Hours

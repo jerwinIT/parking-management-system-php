@@ -22,6 +22,33 @@ $vehicles = $pdo->prepare('SELECT id, plate_number, model, color FROM vehicles W
 $vehicles->execute([currentUserId()]);
 $vehicles = $vehicles->fetchAll();
 
+// AJAX: return slot bookings for a given slot and date (JSON)
+if (isset($_GET['action']) && $_GET['action'] === 'slot_bookings') {
+    $sid = (int) ($_GET['slot_id'] ?? 0);
+    $pd = trim($_GET['parking_date'] ?? '');
+    $out = ['bookings' => []];
+    if ($sid) {
+        if ($pd) {
+            $q = $pdo->prepare("SELECT planned_entry_time, exit_time FROM bookings WHERE parking_slot_id = ? AND DATE(planned_entry_time) = ? AND planned_entry_time IS NOT NULL AND exit_time IS NOT NULL AND status IN (?, ?, ?) ORDER BY planned_entry_time ASC");
+            $q->execute([$sid, $pd, 'pending', 'active', 'confirmed']);
+        } else {
+            // No date provided: return upcoming bookings starting today
+            $q = $pdo->prepare("SELECT planned_entry_time, exit_time FROM bookings WHERE parking_slot_id = ? AND planned_entry_time >= DATE(NOW()) AND planned_entry_time IS NOT NULL AND exit_time IS NOT NULL AND status IN (?, ?, ?) ORDER BY planned_entry_time ASC LIMIT 10");
+            $q->execute([$sid, 'pending', 'active', 'confirmed']);
+        }
+        $rows = $q->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) {
+            $out['bookings'][] = [
+                'start' => $r['planned_entry_time'],
+                'end' => $r['exit_time']
+            ];
+        }
+    }
+    header('Content-Type: application/json');
+    echo json_encode($out);
+    exit;
+}
+
 $step = (int) ($_GET['step'] ?? 1);
 if ($step < 1 || $step > 4) $step = 1;
 
@@ -47,6 +74,14 @@ if ($step >= 2 && $selected_slot_id) {
     $slot_check->execute([$selected_slot_id, 'available']);
     $selected_slot = $slot_check->fetch();
     if (!$selected_slot) { $selected_slot_id = 0; $step = 1; }
+
+    // Fetch existing bookings for this slot on the selected date so we can display reserved times
+    $slot_bookings = [];
+    if ($selected_slot_id && !empty($parking_date)) {
+        $sb = $pdo->prepare("SELECT planned_entry_time, exit_time FROM bookings WHERE parking_slot_id = ? AND DATE(planned_entry_time) = ? AND planned_entry_time IS NOT NULL AND exit_time IS NOT NULL AND status IN (?, ?, ?) ORDER BY planned_entry_time ASC");
+        $sb->execute([$selected_slot_id, $parking_date, 'pending', 'active', 'confirmed']);
+        $slot_bookings = $sb->fetchAll(PDO::FETCH_ASSOC);
+    }
 }
 
 // Step 3: confirm and submit
@@ -391,16 +426,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_payment'])) {
             $amount = round(($billed_mins / 60) * $hourly_rate_php, 2);
         }
 
+        // ===== New: Check whether the selected slot already has a booking that overlaps these times =====
+        if ($entry_dt && $exit_dt) {
+            $slotOverlap = $pdo->prepare('SELECT id, planned_entry_time, exit_time FROM bookings WHERE parking_slot_id = ? AND status IN (?, ?, ?) AND planned_entry_time IS NOT NULL AND exit_time IS NOT NULL AND planned_entry_time < ? AND exit_time > ? LIMIT 1');
+            $slotOverlap->execute([$slot_id, 'pending', 'active', 'confirmed', $exit_dt, $entry_dt]);
+            $slotConflict = $slotOverlap->fetch(PDO::FETCH_ASSOC);
+            if ($slotConflict) {
+                $conf_start = date('g:i A', strtotime($slotConflict['planned_entry_time']));
+                $conf_end = date('g:i A', strtotime($slotConflict['exit_time']));
+                $conf_date = date('F j, Y', strtotime($slotConflict['planned_entry_time']));
+                $error = 'Selected slot is already booked for ' . htmlspecialchars($conf_start . ' - ' . $conf_end) . ' on ' . htmlspecialchars($conf_date) . '. Please choose a different time.';
+                $step = 4;
+                goto PAYMENT_VALIDATE_END;
+            }
+        }
+
         $pdo->beginTransaction();
         try {
+            // Do not alter the parking_slots.status here — allow multiple time-based bookings per slot.
             if ($payment_mode === 'upon_parking') {
-                // Cash on parking: booking pending, slot pending, payment pending
-                $pdo->prepare('UPDATE parking_slots SET status = ? WHERE id = ?')->execute(['pending', $slot_id]);
                 $status = 'pending';
                 $payment_status = 'pending';
             } else {
-                // Online payment: booking pending, payment marked paid, slot pending (reserved)
-                $pdo->prepare('UPDATE parking_slots SET status = ? WHERE id = ?')->execute(['pending', $slot_id]);
                 $status = 'pending';
                 $payment_status = 'paid';
             }
@@ -748,6 +795,9 @@ require dirname(__DIR__) . '/includes/header.php';
             <div class="selected-slot-box rounded-3 py-2 px-3 mb-4" id="selectedSlotBox" style="display: none; background: #dcfce7; color: #166534; font-size: 0.9rem;">
                 <span class="text-muted">Selected Slot:</span> <strong id="selectedSlotLabel">—</strong>
             </div>
+            <div id="slotAvailabilityBox" style="display:none;margin-bottom:12px;">
+                <!-- Filled by JS: shows whether all times available or reserved ranges -->
+            </div>
             <?php if (empty($available_slots)): ?>
                 <p class="text-muted mb-0">No slots available. Try again later.</p>
             <?php else: ?>
@@ -798,8 +848,38 @@ require dirname(__DIR__) . '/includes/header.php';
                 if (label) label.textContent = num;
                 if (box) box.style.display = 'block';
                 if (btnContinue) btnContinue.disabled = false;
+                // fetch availability for this slot (no date => upcoming bookings)
+                fetchSlotAvailability(id);
             });
         });
+        
+        function renderAvailability(bookings) {
+            var wrap = document.getElementById('slotAvailabilityBox');
+            if (!wrap) return;
+            if (!bookings || bookings.length === 0) {
+                wrap.innerHTML = '<div class="rounded-3 p-3" style="background:#ecfdf5;border:1px solid #bbf7d0;color:#064e3b;border-radius:10px;">\n                    <div style="font-weight:700;"><i class="bi bi-check-circle-fill" style="color:#16a34a;margin-right:6px;"></i> All Times Available</div>\n                    <div style="color:#6b7280;margin-top:6px;">This slot has no bookings - select any time you prefer</div>\n                </div>';
+            } else {
+                var html = '<div class="rounded-3 p-3" style="background:#fff1f2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:10px;">';
+                html += '<div style="font-weight:700;"><i class="bi bi-x-circle-fill" style="margin-right:6px;"></i> Slot has reserved times</div>';
+                html += '<div style="color:#6b7280;margin-top:6px;">Upcoming reserved times:</div><div style="margin-top:8px;"><ul style="margin:0;padding-left:18px;">';
+                bookings.forEach(function(b){
+                    var s = new Date(b.start);
+                    var e = new Date(b.end);
+                    function fmt(d){ var hh = d.getHours(); var mm = d.getMinutes(); var am = hh>=12; var h = hh%12; if(h===0) h=12; return h+':'+String(mm).padStart(2,'0')+(am? ' PM':' AM'); }
+                    var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                    html += '<li style="margin-bottom:6px;font-weight:600;">'+fmt(s)+' - '+fmt(e)+'<div style="font-size:0.78rem;color:#ef4444;margin-top:3px;">'+monthNames[s.getMonth()]+' '+String(s.getDate()).padStart(2,'0')+', '+s.getFullYear()+'</div></li>';
+                });
+                html += '</ul></div></div>';
+                wrap.innerHTML = html;
+            }
+            wrap.style.display = 'block';
+        }
+
+        function fetchSlotAvailability(slotId) {
+            if (!slotId) return;
+            var url = window.location.pathname + '?action=slot_bookings&slot_id=' + encodeURIComponent(slotId);
+            fetch(url, { credentials: 'same-origin' }).then(function(r){ return r.json(); }).then(function(data){ renderAvailability(data.bookings || []); }).catch(function(){ renderAvailability([]); });
+        }
     })();
     </script>
 
@@ -808,7 +888,23 @@ require dirname(__DIR__) . '/includes/header.php';
     <div class="card border-0 rounded-3 shadow-sm" style="border:1px solid #e5f2e8;">
         <div class="card-body p-4" style="background:#fff;">
             <h5 class="fw-bold text-dark mb-4" style="font-size:1.15rem;">Select Booking Time</h5>
-            <div id="hoursNotice" class="alert alert-danger" style="display:none;"></div>
+                <div id="hoursNotice" class="alert alert-danger" style="display:none;"></div>
+                <?php if (!empty($slot_bookings) && !empty($selected_slot)): ?>
+                <div class="alert" style="background:#fff1f2;border:1px solid #fca5a5;border-radius:10px;padding:14px;margin-bottom:12px;color:#7f1d1d;">
+                    <div style="font-weight:700;margin-bottom:6px;"><i class="bi bi-x-circle-fill"></i> Cannot Select These Times</div>
+                    <div style="color:#6b7280;margin-bottom:8px;">These time slots are already booked for <?= htmlspecialchars(slotLabel($selected_slot['slot_number'])) ?>:</div>
+                    <div id="slotBookedList" style="background:#fff;border-radius:8px;padding:10px;border:1px solid #fde7e7;">
+                        <ul style="margin:0;padding-left:18px;">
+                            <?php foreach ($slot_bookings as $sb_item): ?>
+                                <li style="margin-bottom:8px;color:#7f1d1d;font-weight:600;">
+                                    <?= htmlspecialchars(date('g:i A', strtotime($sb_item['planned_entry_time']))) ?> - <?= htmlspecialchars(date('g:i A', strtotime($sb_item['exit_time']))) ?>
+                                    <div style="font-size:0.78rem;color:#ef4444;margin-top:3px;"><?= htmlspecialchars(date('F j, Y', strtotime($sb_item['planned_entry_time']))) ?></div>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </div>
+                </div>
+                <?php endif; ?>
             <form method="get" action="<?= BASE_URL ?>/user/book.php" id="formStep2" data-opening="<?= $opening_time_setting ? date('H:i', strtotime($opening_time_setting)) : '' ?>" data-closing="<?= $closing_time_setting ? date('H:i', strtotime($closing_time_setting)) : '' ?>" data-opening-friendly="<?= $opening_time_setting ? date('g:i A', strtotime($opening_time_setting)) : '' ?>" data-closing-friendly="<?= $closing_time_setting ? date('g:i A', strtotime($closing_time_setting)) : '' ?>">
                 <input type="hidden" name="step" value="3">
                 <input type="hidden" name="slot_id" value="<?= $selected_slot_id ?>">
@@ -960,6 +1056,45 @@ require dirname(__DIR__) . '/includes/header.php';
         endEl.addEventListener('input', updateDurationAndValidate);
         updateDurationAndValidate();
 
+        // Fetch and render existing bookings for this slot/date
+        var slotBookedList = document.getElementById('slotBookedList');
+        function renderSlotBookings(bookings) {
+            if (!slotBookedList) return;
+            if (!bookings || bookings.length === 0) {
+                slotBookedList.innerHTML = '';
+                return;
+            }
+            var html = '<ul style="margin:0;padding-left:18px;">';
+            bookings.forEach(function(b){
+                var s = new Date(b.start);
+                var e = new Date(b.end);
+                function fmt(d){
+                    var hh = d.getHours(); var mm = d.getMinutes();
+                    var am = hh >= 12; var h = hh % 12; if (h === 0) h = 12;
+                    return h + ':' + String(mm).padStart(2,'0') + (am ? ' PM' : ' AM');
+                }
+                var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                html += '<li style="margin-bottom:8px;color:#7f1d1d;font-weight:600;">' + fmt(s) + ' - ' + fmt(e) + '<div style="font-size:0.78rem;color:#ef4444;margin-top:3px;">' + monthNames[s.getMonth()] + ' ' + String(s.getDate()).padStart(2,'0') + ', ' + s.getFullYear() + '</div></li>';
+            });
+            html += '</ul>';
+            slotBookedList.innerHTML = html;
+        }
+
+        function fetchSlotBookings() {
+            var slotInput = form.querySelector('input[name="slot_id"]');
+            var sid = slotInput ? slotInput.value : '';
+            var pd = dateEl.value || '';
+            if (!sid || !pd) { renderSlotBookings([]); return; }
+            var url = window.location.pathname + '?action=slot_bookings&slot_id=' + encodeURIComponent(sid) + '&parking_date=' + encodeURIComponent(pd);
+            fetch(url, { credentials: 'same-origin' }).then(function(resp){ return resp.json(); }).then(function(data){ if (data && data.bookings) renderSlotBookings(data.bookings); else renderSlotBookings([]); }).catch(function(){ renderSlotBookings([]); });
+        }
+
+        // Call fetch when date changes and on load
+        dateEl.addEventListener('change', fetchSlotBookings);
+        dateEl.addEventListener('input', fetchSlotBookings);
+        // also fetch on initial load (if date already set)
+        setTimeout(fetchSlotBookings, 250);
+
         // prevent submission if invalid
         form.addEventListener('submit', function(e) {
             if (invalidBooking) {
@@ -1014,6 +1149,15 @@ require dirname(__DIR__) . '/includes/header.php';
             }
         }
     }
+    // Check if selected slot itself has a conflicting booking for the chosen time
+    $slot_conflict = null;
+    if ($parking_date && $start_time && $end_time && $selected_slot_id) {
+        $entry_dt = $parking_date . ' ' . (strlen($start_time) === 5 ? $start_time . ':00' : substr($start_time, 0, 8));
+        $exit_dt = $parking_date . ' ' . (strlen($end_time) === 5 ? $end_time . ':00' : substr($end_time, 0, 8));
+        $sc = $pdo->prepare('SELECT planned_entry_time, exit_time FROM bookings WHERE parking_slot_id = ? AND status IN (?, ?, ?) AND planned_entry_time IS NOT NULL AND exit_time IS NOT NULL AND planned_entry_time < ? AND exit_time > ? LIMIT 1');
+        $sc->execute([$selected_slot_id, 'pending', 'active', 'confirmed', $exit_dt, $entry_dt]);
+        $slot_conflict = $sc->fetch(PDO::FETCH_ASSOC);
+    }
     ?>
     <!-- Step 3: Confirm -->
     <div class="card border-0 shadow-sm">
@@ -1028,6 +1172,13 @@ require dirname(__DIR__) . '/includes/header.php';
             <div class="alert alert-warning" style="background:#fff7ed;border:1px solid #fed7aa;color:#92400e;border-radius:8px;padding:12px;margin-bottom:1rem;">
                 <i class="bi bi-exclamation-triangle-fill me-2"></i>
                 <strong>Note:</strong> Some of your vehicles are already booked during this time. They are marked below.
+            </div>
+            <?php endif; ?>
+            <?php if (!empty($slot_conflict)): ?>
+            <div class="alert" style="background:#fff1f2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:12px;margin-bottom:1rem;">
+                <i class="bi bi-x-circle-fill me-2"></i>
+                <strong>Selected slot is already booked for this time:</strong>
+                <div style="margin-top:6px;"><?= htmlspecialchars(date('g:i A', strtotime($slot_conflict['planned_entry_time']))) ?> - <?= htmlspecialchars(date('g:i A', strtotime($slot_conflict['exit_time']))) ?> on <?= htmlspecialchars(date('F j, Y', strtotime($slot_conflict['planned_entry_time']))) ?></div>
             </div>
             <?php endif; ?>
             
@@ -1061,7 +1212,7 @@ require dirname(__DIR__) . '/includes/header.php';
                 
                 <div class="d-flex justify-content-between gap-2">
                     <a href="<?= htmlspecialchars($backUrl) ?>" class="btn btn-outline-secondary rounded-3 px-4">Back</a>
-                    <button type="submit" class="btn btn-success rounded-3 px-4">Proceed to Payment</button>
+                    <button type="submit" class="btn btn-success rounded-3 px-4" <?= !empty($slot_conflict) ? 'disabled' : '' ?>>Proceed to Payment</button>
                 </div>
             </form>
         </div>
@@ -1129,7 +1280,7 @@ require dirname(__DIR__) . '/includes/header.php';
             $row = $s->fetch();
             $slot_number = $row ? slotLabel($row['slot_number']) : '';
         }
-        $display_date = $pd ? date('Y-m-d', strtotime($pd)) : '—';
+        $display_date = $pd ? date('F j, Y', strtotime($pd)) : '—';
         $display_start = $st ? (strlen($st) >= 5 ? substr($st,0,5) : $st) : '—';
         $display_end = $et ? (strlen($et) >= 5 ? substr($et,0,5) : $et) : '—';
         $hourly_rate_php = 30;

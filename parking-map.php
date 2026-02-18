@@ -11,10 +11,8 @@ $page_title = 'Parking Map';
 $current_page = 'map';
 
 $pdo = getDB();
-$slots = $pdo->query('SELECT ps.id, ps.slot_number, ps.slot_row, ps.slot_column, ps.status,
-    (SELECT CONCAT(v.plate_number, " - ", u.full_name) FROM bookings b JOIN vehicles v ON b.vehicle_id = v.id JOIN users u ON b.user_id = u.id WHERE b.parking_slot_id = ps.id AND b.status = "parked" LIMIT 1) AS vehicle_info,
-    (SELECT b.entry_time FROM bookings b WHERE b.parking_slot_id = ps.id AND b.status = "parked" LIMIT 1) AS entry_time
-    FROM parking_slots ps ORDER BY ps.slot_row, ps.slot_column')->fetchAll();
+// Fetch basic slot info; occupancy and parked vehicle info will be determined via helpers
+$slots = $pdo->query('SELECT ps.id, ps.slot_number, ps.slot_row, ps.slot_column, ps.status FROM parking_slots ps ORDER BY ps.slot_row, ps.slot_column')->fetchAll();
 
 // Group by row for grid display
 $by_row = [];
@@ -58,17 +56,35 @@ require __DIR__ . '/includes/header.php';
                 <div class="parking-grid-row-label">Row <?= htmlspecialchars($row_num) ?></div>
                 <div class="parking-grid-row" data-row="<?= $row_num ?>">
                     <?php foreach ($row_slots as $slot): ?>
-                        <div class="slot-box <?= $slot['status'] === 'available' ? 'slot-available' : ($slot['status'] === 'maintenance' ? 'slot-maintenance' : 'slot-occupied') ?>" data-slot="<?= htmlspecialchars($slot['slot_number']) ?>">
+                        <?php
+                            // Determine dynamic state
+                            $stateClass = 'slot-available';
+                            if ($slot['status'] === 'maintenance') {
+                                $stateClass = 'slot-maintenance';
+                            } else {
+                                try {
+                                    if (isSlotOccupiedNow($pdo, $slot['id'])) {
+                                        $stateClass = 'slot-occupied';
+                                    } else {
+                                        $stateClass = 'slot-available';
+                                    }
+                                } catch (Exception $e) {
+                                    $stateClass = ($slot['status'] === 'available') ? 'slot-available' : 'slot-occupied';
+                                }
+                            }
+                            $parkedInfo = getParkedBookingInfo($pdo, $slot['id']);
+                        ?>
+                        <div class="slot-box <?= $stateClass ?>" data-slot="<?= htmlspecialchars($slot['slot_number']) ?>">
                             <div class="slot-content">
                                 <div class="slot-number"><?= htmlspecialchars($slot['slot_number']) ?></div>
-                                <?php if (!empty($slot['vehicle_info'])): ?>
-                                    <div class="slot-vehicle-info"><?= htmlspecialchars($slot['vehicle_info']) ?></div>
+                                <?php if (!empty($parkedInfo['plate_number'])): ?>
+                                    <div class="slot-vehicle-info"><?= htmlspecialchars($parkedInfo['plate_number'] . ' - ' . ($parkedInfo['full_name'] ?? '')) ?></div>
                                 <?php endif; ?>
-                                <?php if (!empty($slot['entry_time']) && $slot['status'] === 'parked'): ?>
-                                    <div class="slot-entry-time"><?= date('g:i A', strtotime($slot['entry_time'])) ?></div>
+                                <?php if (!empty($parkedInfo['entry_time'])): ?>
+                                    <div class="slot-entry-time"><?= date('g:i A', strtotime($parkedInfo['entry_time'])) ?></div>
                                 <?php endif; ?>
                             </div>
-                            <div class="slot-status"><?= ucfirst($slot['status']) ?></div>
+                            <div class="slot-status"><?= htmlspecialchars(ucfirst($slot['status'] === 'maintenance' ? 'maintenance' : ($stateClass === 'slot-occupied' ? 'occupied' : 'available'))) ?></div>
                         </div>
                     <?php endforeach; ?>
                 </div>

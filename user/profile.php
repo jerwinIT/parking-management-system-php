@@ -28,23 +28,70 @@ if (!$user) { header('Location: ' . BASE_URL . '/index.php'); exit; }
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['save_profile'])) {
-        // Profile update
+        // Profile update - enforce same name/email/phone rules as registration
         $full_name = trim($_POST['full_name'] ?? '');
         $phone = trim($_POST['phone'] ?? '');
         $email = trim($_POST['email'] ?? '');
 
+        // Full name validation - must contain only letters and spaces and have at least two words
+        $profile_ok = true;
         if (empty($full_name)) {
-            setAlert('Full name is required.', 'danger');
-        } elseif (empty($email)) {
-            setAlert('Email is required.', 'danger');
+            setAlert('Full name is required.', 'danger'); $profile_ok = false;
         } else {
+            $nameParts = preg_split('/\s+/', $full_name, -1, PREG_SPLIT_NO_EMPTY);
+            if (count($nameParts) < 2) {
+                setAlert('Please enter both first name and last name in the Full Name field.', 'danger'); $profile_ok = false;
+            } elseif (!preg_match('/^[A-Za-z\s]+$/', $full_name)) {
+                setAlert('Full name can only contain letters and spaces. Special characters and numbers are not allowed.', 'danger'); $profile_ok = false;
+            }
+        }
+
+        // Email server-side validation (copy of registration rules)
+        if (empty($email)) {
+            setAlert('Email is required.', 'danger'); $profile_ok = false;
+        } else {
+            $email_parts = explode('@', $email);
+            $email_local = $email_parts[0] ?? '';
+            $email_domain = $email_parts[1] ?? '';
+
+            if (strlen($email) > 254) {
+                setAlert('Email address is too long (maximum 254 characters).', 'danger'); $profile_ok = false;
+            } elseif (!preg_match('/^[A-Za-z0-9._+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/', $email)) {
+                setAlert('Please enter a valid email address (local-part@domain).', 'danger'); $profile_ok = false;
+            } elseif (strpos($email, '..') !== false) {
+                setAlert('Email cannot contain consecutive dots.', 'danger'); $profile_ok = false;
+            } elseif (!preg_match('/^[A-Za-z0-9._+\-]+$/', $email_local)) {
+                setAlert('Invalid email format', 'danger'); $profile_ok = false;
+            } elseif (strlen($email_local) < 3) {
+                setAlert('Invalid email format', 'danger'); $profile_ok = false;
+            } elseif (!preg_match('/[A-Za-z]/', $email_local)) {
+                setAlert('Email must contain at least one letter', 'danger'); $profile_ok = false;
+            } elseif (preg_match('/^[0-9]+$/', $email_local)) {
+                setAlert('Email cannot be all numbers', 'danger'); $profile_ok = false;
+            } elseif (strlen($email_local) === 0 || $email_local[0] === '.' || substr($email_local, -1) === '.') {
+                setAlert('Local part of the email cannot start or end with a dot.', 'danger'); $profile_ok = false;
+            } elseif (strpos($email_domain, '.') === false) {
+                setAlert('Email domain must contain at least one dot (e.g. example.com).', 'danger'); $profile_ok = false;
+            } elseif (!preg_match('/^(?!-)([A-Za-z0-9\-]+)(?<!-)(\.(?!-)([A-Za-z0-9\-]+)(?<!-))*$/', $email_domain)) {
+                setAlert('Email domain contains invalid characters or labels.', 'danger'); $profile_ok = false;
+            }
+        }
+
+        // Phone validation - accept Philippine format 09XXXXXXXXX
+        $phone_normalized = preg_replace('/[^0-9]/', '', $phone);
+        if ($phone_normalized !== '' && !preg_match('/^09[0-9]{9}$/', $phone_normalized)) {
+            setAlert('Phone number must be in format 09XXXXXXXXX (11 digits starting with 09).', 'danger'); $profile_ok = false;
+        }
+
+        // If validations passed, proceed to uniqueness check and update
+        if ($profile_ok) {
             $stmt = $pdo->prepare('SELECT id FROM users WHERE email = ? AND id != ?');
-            $stmt->execute([$email, currentUserId()]);
+            $stmt->execute([strtolower($email), currentUserId()]);
             if ($stmt->fetch()) {
                 setAlert('Email already used by another account.', 'danger');
             } else {
                 $stmt = $pdo->prepare('UPDATE users SET full_name = ?, email = ?, phone = ? WHERE id = ?');
-                $stmt->execute([$full_name, $email, $phone ?: null, currentUserId()]);
+                $stmt->execute([$full_name, strtolower($email), $phone ?: null, currentUserId()]);
                 $_SESSION['full_name'] = $full_name;
                 setAlert('Profile updated successfully.', 'success');
                 $user['full_name'] = $full_name;
@@ -52,18 +99,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $user['phone'] = $phone;
             }
         }
+
     } elseif (isset($_POST['change_password'])) {
         // Password change
         $current_password = $_POST['current_password'] ?? '';
         $new_password = $_POST['new_password'] ?? '';
         $confirm_password = $_POST['confirm_password'] ?? '';
-
+        // Enforce registration-level password rules: 8-128 chars, upper, lower, number, special
         if (empty($current_password) || empty($new_password) || empty($confirm_password)) {
             setAlert('All password fields are required.', 'danger');
         } elseif ($new_password !== $confirm_password) {
             setAlert('New password and confirmation do not match.', 'danger');
-        } elseif (strlen($new_password) < 6) {
-            setAlert('New password must be at least 6 characters.', 'danger');
+        } elseif (strlen($new_password) < 8) {
+            setAlert('New password must be at least 8 characters long.', 'danger');
+        } elseif (strlen($new_password) > 128) {
+            setAlert('New password is too long (maximum 128 characters).', 'danger');
+        } elseif (!preg_match('/[A-Z]/', $new_password)) {
+            setAlert('New password must contain at least one uppercase letter.', 'danger');
+        } elseif (!preg_match('/[a-z]/', $new_password)) {
+            setAlert('New password must contain at least one lowercase letter.', 'danger');
+        } elseif (!preg_match('/[0-9]/', $new_password)) {
+            setAlert('New password must contain at least one number.', 'danger');
+        } elseif (!preg_match('/[^a-zA-Z0-9]/', $new_password)) {
+            setAlert('New password must contain at least one special character (@, #, $, %, etc.).', 'danger');
         } else {
             $stmt = $pdo->prepare('SELECT password FROM users WHERE id = ?');
             $stmt->execute([currentUserId()]);
@@ -245,9 +303,136 @@ document.addEventListener('DOMContentLoaded', function(){
     var modalEl = document.getElementById('settingsModal');
     if (modalEl && typeof bootstrap !== 'undefined'){
         var bs = new bootstrap.Modal(modalEl);
-        bs.show();
+        // If a server-side alert is present, wait until it's dismissed before opening settings
+        if (window.__hasServerAlert) {
+            var alertModalEl = document.getElementById('alertModal');
+            if (alertModalEl) {
+                alertModalEl.addEventListener('hidden.bs.modal', function handler(){
+                    alertModalEl.removeEventListener('hidden.bs.modal', handler);
+                    bs.show();
+                });
+            } else {
+                // fallback
+                setTimeout(function(){ bs.show(); }, 400);
+            }
+        } else {
+            bs.show();
+        }
+
         modalEl.addEventListener('hidden.bs.modal', function(){
             window.location = '<?= BASE_URL ?>/index.php';
+        });
+    }
+
+    // Client-side validation: mirror registration rules for profile fields
+    var fullNameEl = document.querySelector('input[name="full_name"]');
+    var emailEl = document.querySelector('input[name="email"]');
+    var phoneEl = document.querySelector('input[name="phone"]');
+    var newPassEl = document.querySelector('input[name="new_password"]');
+    var confirmPassEl = document.querySelector('input[name="confirm_password"]');
+    var profileForm = document.querySelector('form[action$="?tab=profile"]');
+    var securityForm = document.querySelector('form[action$="?tab=security"]');
+
+    function validateEmailFormat(email) {
+        var e = (email || '').toLowerCase().trim();
+        if (!e) return 'Email is required';
+        if (e.length > 254) return 'Invalid email format';
+        var basic = /^[A-Za-z0-9._+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+        if (!basic.test(e)) return 'Invalid email format';
+        if (e.indexOf('..') !== -1) return 'Invalid email format';
+        var parts = e.split('@');
+        var local = parts[0] || '';
+        var domain = parts[1] || '';
+        if (!local) return 'Invalid email format';
+        if (local.length < 3) return 'Invalid email format';
+        if (!/^[A-Za-z0-9._+\-]+$/.test(local)) return 'Invalid email format';
+        if (local.startsWith('.') || local.endsWith('.')) return 'Invalid email format';
+        if (!/[A-Za-z]/.test(local)) return 'Email must contain at least one letter';
+        if (/^[0-9]+$/.test(local)) return 'Email cannot be all numbers';
+        if (!domain || domain.startsWith('.') || domain.endsWith('.')) return 'Invalid email format';
+        if (domain.indexOf('.') === -1) return 'Invalid email format';
+        var labels = domain.split('.');
+        for (var i=0;i<labels.length;i++){
+            var lab = labels[i];
+            if (!lab) return 'Invalid email format';
+            if (lab.startsWith('-') || lab.endsWith('-')) return 'Invalid email format';
+            if (!/^[A-Za-z0-9\-]+$/.test(lab)) return 'Invalid email format';
+        }
+        return '';
+    }
+
+    if (fullNameEl) {
+        fullNameEl.addEventListener('input', function(){
+            var v = (this.value || '').trim();
+            var parts = v.split(/\s+/).filter(Boolean);
+            var valid = /^[A-Za-z\s]+$/.test(v) && parts.length >= 2;
+            this.classList.toggle('is-valid', valid && v.length>0);
+            this.classList.toggle('is-invalid', !valid && v.length>0);
+        });
+    }
+
+    if (emailEl) {
+        emailEl.addEventListener('input', function(){
+            var msg = validateEmailFormat(this.value);
+            this.classList.toggle('is-valid', !msg);
+            this.classList.toggle('is-invalid', !!msg);
+        });
+    }
+
+    if (phoneEl) {
+        phoneEl.addEventListener('input', function(){
+            var v = (this.value || '').replace(/[^0-9]/g,'');
+            var ok = v === '' || /^09[0-9]{9}$/.test(v);
+            this.classList.toggle('is-valid', ok && v.length>0);
+            this.classList.toggle('is-invalid', !ok && v.length>0);
+        });
+    }
+
+    // Security tab: password strength and match
+    function checkNewPasswordStrength() {
+        if (!newPassEl) return true;
+        var p = newPassEl.value || '';
+        var ok = p.length >=8 && p.length <=128 && /[A-Z]/.test(p) && /[a-z]/.test(p) && /[0-9]/.test(p) && /[^a-zA-Z0-9]/.test(p);
+        newPassEl.classList.toggle('is-valid', ok && p.length>0);
+        newPassEl.classList.toggle('is-invalid', !ok && p.length>0);
+        return ok;
+    }
+    function checkNewPasswordMatch() {
+        if (!newPassEl || !confirmPassEl) return true;
+        var p = newPassEl.value || '';
+        var c = confirmPassEl.value || '';
+        var match = (p === c && c.length>0);
+        confirmPassEl.classList.toggle('is-valid', match);
+        confirmPassEl.classList.toggle('is-invalid', !match && c.length>0);
+        return match;
+    }
+    if (newPassEl) newPassEl.addEventListener('input', function(){ checkNewPasswordStrength(); checkNewPasswordMatch(); });
+    if (confirmPassEl) confirmPassEl.addEventListener('input', checkNewPasswordMatch);
+
+    // Profile form submit validation
+    if (profileForm) {
+        profileForm.addEventListener('submit', function(e){
+            var fn = fullNameEl ? fullNameEl.value.trim() : '';
+            var fnParts = fn.split(/\s+/).filter(Boolean);
+            if (!fn || fnParts.length < 2 || !/^[A-Za-z\s]+$/.test(fn)) {
+                e.preventDefault();
+                if (fullNameEl) { fullNameEl.classList.add('is-invalid'); fullNameEl.focus(); }
+                return;
+            }
+            var emailMsg = emailEl ? validateEmailFormat(emailEl.value) : 'Email is required';
+            if (emailMsg) { e.preventDefault(); if (emailEl) { emailEl.classList.add('is-invalid'); emailEl.focus(); } return; }
+            var phoneVal = phoneEl ? phoneEl.value.replace(/[^0-9]/g,'') : '';
+            if (phoneVal && !/^09[0-9]{9}$/.test(phoneVal)) { e.preventDefault(); if (phoneEl) { phoneEl.classList.add('is-invalid'); phoneEl.focus(); } return; }
+        });
+    }
+
+    // Security form submit validation
+    if (securityForm) {
+        securityForm.addEventListener('submit', function(e){
+            if (!checkNewPasswordStrength() || !checkNewPasswordMatch()) {
+                e.preventDefault();
+                if (newPassEl) newPassEl.focus();
+            }
         });
     }
 });

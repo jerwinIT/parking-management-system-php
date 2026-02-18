@@ -185,23 +185,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_vehicle'])) {
                 if (!$stmt->fetch()) {
                     $error = 'Vehicle not found.';
                 } else {
-                    // Check uniqueness (exclude current)
-                    $stmt = $pdo->prepare('SELECT id FROM vehicles WHERE plate_number = ? AND id != ?');
-                    $stmt->execute([$plate_norm, $vehicle_id]);
-                    if ($stmt->fetch()) {
-                        $error = 'This plate number is already registered.';
-                    } else {
-                        // Append year to model if provided
-                        $store_model = $model;
-                        if ($year) {
-                            if ($store_model) $store_model = $store_model . ' (' . $year . ')';
-                            else $store_model = $year;
+                    // Prevent plate change if there are active/parked bookings for this vehicle
+                    $stmtCheck = $pdo->prepare('SELECT plate_number FROM vehicles WHERE id = ? AND user_id = ?');
+                    $stmtCheck->execute([$vehicle_id, currentUserId()]);
+                    $existing = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+                    if ($existing && $existing['plate_number'] !== $plate_norm) {
+                        $stmtB = $pdo->prepare('SELECT COUNT(*) FROM bookings WHERE vehicle_id = ? AND status IN (\'pending\',\'confirmed\',\'parked\')');
+                        $stmtB->execute([$vehicle_id]);
+                        $activeCount = (int) $stmtB->fetchColumn();
+                        if ($activeCount > 0) {
+                            $error = 'Cannot change plate number while there are active or parked bookings for this vehicle. Cancel or complete those bookings first.';
                         }
-                        $pdo->prepare('UPDATE vehicles SET plate_number = ?, plate_number_original = ?, vehicle_type = ?, model = ?, color = ?, owner_name = ?, owner_phone = ?, owner_email = ? WHERE id = ? AND user_id = ?')
-                            ->execute([$plate_norm, $plate_original, $vehicle_type, $store_model ?: null, $color ?: null, $owner_name, $phone_norm, $email_norm, $vehicle_id, currentUserId()]);
-                        setAlert('Vehicle details updated successfully.', 'success');
-                        header('Location: ' . BASE_URL . '/user/register-car.php');
-                        exit;
+                    }
+
+                    if (empty($error)) {
+                        // Check uniqueness (exclude current)
+                        $stmtUnique = $pdo->prepare('SELECT id FROM vehicles WHERE plate_number = ? AND id != ?');
+                        $stmtUnique->execute([$plate_norm, $vehicle_id]);
+                        if ($stmtUnique->fetch()) {
+                            $error = 'This plate number is already registered.';
+                        } else {
+                            // Append year to model if provided
+                            $store_model = $model;
+                            if ($year) {
+                                if ($store_model) {
+                                    $store_model = $store_model . ' (' . $year . ')';
+                                } else {
+                                    $store_model = $year;
+                                }
+                            }
+                            $pdo->prepare('UPDATE vehicles SET plate_number = ?, plate_number_original = ?, vehicle_type = ?, model = ?, color = ?, owner_name = ?, owner_phone = ?, owner_email = ? WHERE id = ? AND user_id = ?')
+                                ->execute([$plate_norm, $plate_original, $vehicle_type, $store_model ?: null, $color ?: null, $owner_name, $phone_norm, $email_norm, $vehicle_id, currentUserId()]);
+                            setAlert('Vehicle details updated successfully.', 'success');
+                            header('Location: ' . BASE_URL . '/user/register-car.php');
+                            exit;
+                        }
                     }
                 }
             } else {
@@ -404,9 +422,23 @@ require dirname(__DIR__) . '/includes/header.php';
         transform: translateY(-2px);
     }
 
+    /* Modal action buttons (match requested style) */
+    .modal-btn-cancel {
+        flex:1; min-width:120px; padding:0.85rem 1.25rem; border-radius:12px; background:#fff; border:1px solid #e5e7eb; color:#374151; font-weight:700;
+    }
+    .modal-btn-save {
+        flex:1; min-width:120px; padding:0.85rem 1.25rem; border-radius:12px; background:linear-gradient(135deg,#16a34a 0%,#15803d 100%); color:#fff; font-weight:700; border:none;
+    }
+    .modal-btn-save:hover {
+        background: linear-gradient(180deg,#bbf7d0 0%,#ecfdf5 100%); color: #064e3b; box-shadow: 0 8px 20px rgba(16,185,129,0.12); border-radius:12px;
+    }
+    .modal-btn-save:active, .modal-btn-save.selected {
+        background: linear-gradient(135deg,#0f6a2a 0%,#0b4d1e 100%); color:#fff;
+    }
+
     .vehicle-list {
         display: grid;
-        gap: 1.25rem;
+        gap: 1.5rem;
     }
 
     .vehicle-card {
@@ -415,17 +447,37 @@ require dirname(__DIR__) . '/includes/header.php';
         border-radius: 14px;
         padding: 1.5rem;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         display: grid;
         grid-template-columns: auto 1fr auto;
         gap: 1.5rem;
         align-items: center;
+        margin-bottom: 0.75rem;
+        border-radius: 12px;
     }
 
     .vehicle-card:hover {
-        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
-        border-color: #16a34a;
-        transform: translateY(-2px);
+        box-shadow: 0 12px 24px rgba(16, 185, 129, 0.08);
+        border-color: transparent;
+        background: linear-gradient(180deg, #f0fdf4 0%, #ecfdf5 100%);
+        transform: translateY(-4px);
+        border-radius: 12px;
+        outline: 0;
+    }
+
+    /* Selected card (e.g., default or active selection) */
+    .vehicle-card.selected, .vehicle-card.is-selected {
+        background: linear-gradient(135deg, #15803d 0%, #115e2b 100%);
+        color: #ffffff;
+        border-color: transparent;
+        box-shadow: 0 12px 28px rgba(4, 120, 87, 0.18);
+    }
+    .vehicle-card.selected .vehicle-plate, .vehicle-card.is-selected .vehicle-plate {
+        color: #fff;
+    }
+    .vehicle-card.selected .vehicle-model, .vehicle-card.is-selected .vehicle-model,
+    .vehicle-card.selected .vehicle-color, .vehicle-card.is-selected .vehicle-color {
+        color: rgba(255,255,255,0.9);
     }
 
     .vehicle-icon {
@@ -696,68 +748,108 @@ require dirname(__DIR__) . '/includes/header.php';
                 <div class="modal-body">
                     <form method="post" action="<?= BASE_URL ?>/user/register-car.php" id="vehicleFormModal">
                         <input type="hidden" name="save_vehicle" value="1">
-                        <div class="vehicle-form-grid">
-                            <div>
-                                <label class="form-label">Vehicle Type <span class="text-danger">*</span></label>
-                                <select name="vehicle_type" id="vehicle_type" class="form-control" required>
-                                    <option value="">Select vehicle type</option>
-                                    <option value="<?= PlateValidator::TYPE_PRIVATE ?>">Private Vehicle (Car/SUV/Van)</option>
-                                    <option value="<?= PlateValidator::TYPE_MOTORCYCLE ?>">Motorcycle/Tricycle</option>
-                                    <option value="<?= PlateValidator::TYPE_GOVERNMENT ?>">Government Vehicle</option>
-                                    <option value="<?= PlateValidator::TYPE_FOR_HIRE ?>">For-Hire Vehicle (Taxi/UV Express/Bus)</option>
-                                    <option value="<?= PlateValidator::TYPE_ELECTRIC ?>">Electric Vehicle</option>
-                                    <option value="<?= PlateValidator::TYPE_CONDUCTION ?>">Conduction Sticker (Temporary)</option>
-                                </select>
-                                <div class="form-text">Select the vehicle type to enable proper plate validation</div>
+
+                        <div style="display:flex;flex-direction:column;gap:1rem;">
+                            <!-- Vehicle Information -->
+                            <div style="border-bottom:1px solid #eef2f7;padding-bottom:0.75rem;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+                                <div style="width:36px;height:36px;border-radius:8px;background:#ecfdf5;display:flex;align-items:center;justify-content:center;color:#16a34a;font-weight:700;"><i class="bi bi-car-front-fill"></i></div>
+                                <div style="flex:1">
+                                    <div style="font-weight:800;color:#111;font-size:0.95rem;">VEHICLE INFORMATION <span style="font-weight:700;color:#6b7280;font-size:0.8rem;margin-left:0.5rem;">Required</span></div>
+                                </div>
                             </div>
-                            <div>
-                                <label class="form-label">Plate Number <span class="text-danger">*</span></label>
-                                <input type="text" name="plate_number" id="plate_number" class="form-control" placeholder="ABC-1234" required>
-                                <div class="form-text">Format: <span id="plateExample">ABC1234</span></div>
-                                <div class="text-danger" id="plateError" style="display:none;margin-top:0.4rem;"></div>
+
+                            <div class="vehicle-form-grid">
+                                <div>
+                                    <label class="form-label">Vehicle Type <span class="text-success">*</span></label>
+                                    <select name="vehicle_type" id="vehicle_type" class="form-control" required>
+                                        <option value="">Select vehicle type</option>
+                                        <option value="<?= PlateValidator::TYPE_PRIVATE ?>">Private Vehicle (Car/SUV/Van)</option>
+                                        <option value="<?= PlateValidator::TYPE_MOTORCYCLE ?>">Motorcycle/Tricycle</option>
+                                        <option value="<?= PlateValidator::TYPE_GOVERNMENT ?>">Government Vehicle</option>
+                                        <option value="<?= PlateValidator::TYPE_FOR_HIRE ?>">For-Hire Vehicle (Taxi/UV Express/Bus)</option>
+                                        <option value="<?= PlateValidator::TYPE_ELECTRIC ?>">Electric Vehicle</option>
+                                        <option value="<?= PlateValidator::TYPE_CONDUCTION ?>">Conduction Sticker (Temporary)</option>
+                                    </select>
+                                    <div class="form-text">Enables proper plate validation</div>
+                                </div>
+
+                                <div>
+                                    <label class="form-label">Plate Number <span class="text-success">*</span></label>
+                                    <div style="position:relative;">
+                                        <input type="text" name="plate_number" id="plate_number" class="form-control" placeholder="ABC-1234" required style="padding-left:3.5rem;">
+                                        <div style="position:absolute;left:0;top:0;bottom:0;display:flex;align-items:center;padding-left:0.85rem;color:#6b7280;"><i class="bi bi-card-text"></i></div>
+                                    </div>
+                                    <div class="form-text">Format: <span id="plateExample">ABC1234</span></div>
+                                    <div class="text-danger" id="plateError" style="display:none;margin-top:0.4rem;"></div>
+                                </div>
+
+                                <div>
+                                    <label class="form-label">Vehicle Model</label>
+                                    <input type="text" name="model" class="form-control" placeholder="e.g., Toyota Corolla">
+                                    <div class="form-text">Make and model of your vehicle</div>
+                                </div>
                             </div>
-                            <div>
-                                <label class="form-label">Owner Name <span class="text-danger">*</span></label>
-                                <input type="text" name="owner_name" id="owner_name" class="form-control" placeholder="e.g., Juan Dela Cruz" required>
-                                <div class="form-text">Name will be used on receipts</div>
+
+                            <!-- Owner Details -->
+                            <div style="border-bottom:1px solid #eef2f7;padding-bottom:0.75rem;margin-top:0.5rem;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+                                <div style="width:36px;height:36px;border-radius:8px;background:#ecfeff;display:flex;align-items:center;justify-content:center;color:#06b6d4;font-weight:700;"><i class="bi bi-person-circle"></i></div>
+                                <div style="flex:1">
+                                    <div style="font-weight:800;color:#111;font-size:0.95rem;">OWNER DETAILS <small style="color:#6b7280;font-weight:700;margin-left:0.5rem;">Required</small></div>
+                                </div>
                             </div>
-                            <div>
-                                <label class="form-label">Owner Phone <span class="text-danger">*</span></label>
-                                <input type="text" name="owner_phone" id="owner_phone" class="form-control" placeholder="09XXXXXXXXX or +639XXXXXXXXX" required>
-                                <div class="form-text">Philippine mobile number</div>
+
+                            <div class="vehicle-form-grid">
+                                <div>
+                                    <label class="form-label">Owner Name <span class="text-success">*</span></label>
+                                    <input type="text" name="owner_name" id="owner_name" class="form-control" placeholder="e.g., Juan Dela Cruz" required>
+                                    <div class="form-text">Name will be used on receipts</div>
+                                </div>
+                                <div>
+                                    <label class="form-label">Owner Phone <span class="text-success">*</span></label>
+                                    <input type="text" name="owner_phone" id="owner_phone" class="form-control" placeholder="09XXXXXXXXX" required>
+                                    <div class="form-text">Philippine mobile number</div>
+                                </div>
+                                <div>
+                                    <label class="form-label">Owner Email <span class="text-success">*</span></label>
+                                    <input type="email" name="owner_email" id="owner_email" class="form-control" placeholder="name@example.com" required>
+                                    <div class="form-text">Receipt notifications sent here</div>
+                                </div>
                             </div>
-                            <div>
-                                <label class="form-label">Owner Email <span class="text-danger">*</span></label>
-                                <input type="email" name="owner_email" id="owner_email" class="form-control" placeholder="name@example.com" required>
-                                <div class="form-text">We will send receipt notifications to this address</div>
+
+                            <!-- Additional Details -->
+                            <div style="border-bottom:1px solid #eef2f7;padding-bottom:0.75rem;margin-top:0.5rem;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+                                <div style="width:36px;height:36px;border-radius:8px;background:#faf7ff;display:flex;align-items:center;justify-content:center;color:#7c3aed;font-weight:700;"><i class="bi bi-palette"></i></div>
+                                <div style="flex:1">
+                                    <div style="font-weight:800;color:#111;font-size:0.95rem;">ADDITIONAL DETAILS <small style="color:#6b7280;font-weight:700;margin-left:0.5rem;">Optional</small></div>
+                                </div>
                             </div>
-                            <div>
-                                <label class="form-label">Vehicle Model</label>
-                                <input type="text" name="model" class="form-control" placeholder="e.g., Toyota Corolla">
-                                <div class="form-text">Make and model of your vehicle</div>
+
+                            <div class="vehicle-form-grid">
+                                <div>
+                                    <label class="form-label">Color</label>
+                                    <select name="color" class="form-control">
+                                        <option value="">Select color</option>
+                                        <option>White</option>
+                                        <option>Black</option>
+                                        <option>Silver</option>
+                                        <option>Blue</option>
+                                        <option>Red</option>
+                                        <option>Other</option>
+                                    </select>
+                                    <div class="form-text">Vehicle exterior color</div>
+                                </div>
+                                <div>
+                                    <label class="form-label">Year</label>
+                                    <input type="number" name="year" class="form-control" placeholder="2026" value="<?= date('Y') ?>">
+                                    <div class="form-text">Year of manufacture</div>
+                                </div>
+                                <div></div>
                             </div>
-                            <div>
-                                <label class="form-label">Color</label>
-                                <select name="color" class="form-control">
-                                    <option value="">Select color</option>
-                                    <option>White</option>
-                                    <option>Black</option>
-                                    <option>Silver</option>
-                                    <option>Blue</option>
-                                    <option>Red</option>
-                                    <option>Other</option>
-                                </select>
-                                <div class="form-text">Vehicle exterior color</div>
+
+                            <div style="display:flex;gap:1rem;align-items:center;margin-top:0.5rem;">
+                                <button type="button" class="modal-btn-cancel" data-bs-dismiss="modal"><i class="bi bi-x-lg"></i> Cancel</button>
+                                <button type="submit" class="modal-btn-save"><i class="bi bi-check-lg"></i> Save Vehicle</button>
                             </div>
-                            <div>
-                                <label class="form-label">Year</label>
-                                <input type="number" name="year" class="form-control" placeholder="2026" value="<?= date('Y') ?>">
-                                <div class="form-text">Year of manufacture</div>
-                            </div>
-                        </div>
-                        <div class="vehicle-form-actions">
-                            <button type="button" class="btn btn-cancel" data-bs-dismiss="modal"><i class="bi bi-x-lg"></i> Cancel</button>
-                            <button type="submit" class="btn btn-submit"><i class="bi bi-check-lg"></i> Save Vehicle</button>
                         </div>
                     </form>
                 </div>
@@ -874,9 +966,18 @@ require dirname(__DIR__) . '/includes/header.php';
                                     </button>
                                 </form>
                             <?php endif; ?>
-                            <a href="<?= BASE_URL ?>/user/edit-car.php?id=<?= (int)$v['id'] ?>" class="btn-action btn-action-edit" title="Edit">
+                            <button type="button" class="btn-action btn-action-edit edit-vehicle-btn" title="Edit"
+                                data-id="<?= (int)$v['id'] ?>"
+                                data-plate="<?= htmlspecialchars($v['plate_number']) ?>"
+                                data-model="<?= htmlspecialchars($v['model'] ?? '') ?>"
+                                data-color="<?= htmlspecialchars($v['color'] ?? '') ?>"
+                                data-vehicle_type="<?= htmlspecialchars($v['vehicle_type'] ?? '') ?>"
+                                data-owner_name="<?= htmlspecialchars($v['owner_name'] ?? '') ?>"
+                                data-owner_phone="<?= htmlspecialchars($v['owner_phone'] ?? '') ?>"
+                                data-owner_email="<?= htmlspecialchars($v['owner_email'] ?? '') ?>"
+                            >
                                 <i class="bi bi-pencil"></i> Edit
-                            </a>
+                            </button>
                             <a href="<?= BASE_URL ?>/user/delete-car.php?id=<?= (int)$v['id'] ?>" class="btn-action btn-action-delete" title="Delete" onclick="return confirm('Remove this vehicle from your list?');">
                                 <i class="bi bi-trash"></i> Delete
                             </a>
@@ -886,6 +987,130 @@ require dirname(__DIR__) . '/includes/header.php';
             </div>
         <?php endif; ?>
     <?php endif; ?>
+</div>
+
+<!-- Edit Vehicle Modal -->
+<div class="modal fade" id="editVehicleModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i> Edit Vehicle</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form method="post" action="<?= BASE_URL ?>/user/register-car.php" id="editVehicleForm">
+                    <input type="hidden" name="save_vehicle" value="1">
+                    <input type="hidden" name="vehicle_id" id="edit_vehicle_id" value="0">
+                    <input type="hidden" name="vehicle_type" id="edit_vehicle_type" value="">
+                    <input type="hidden" name="plate_number" id="edit_plate_number_hidden" value="">
+
+                    <div style="display:flex;flex-direction:column;gap:1rem;">
+                        <div style="font-size:0.95rem;color:#6b7280;margin-bottom:0.25rem;">Update the details for your registered vehicle.</div>
+
+                        <!-- Vehicle Information -->
+                        <div style="border-bottom:1px solid #eef2f7;padding-bottom:0.75rem;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+                            <div style="width:36px;height:36px;border-radius:8px;background:#ecfdf5;display:flex;align-items:center;justify-content:center;color:#16a34a;font-weight:700;"><i class="bi bi-car-front-fill"></i></div>
+                            <div style="flex:1">
+                                <div style="font-weight:800;color:#111;font-size:0.95rem;">VEHICLE INFORMATION <span style="font-weight:700;color:#6b7280;font-size:0.8rem;margin-left:0.5rem;">Required</span></div>
+                            </div>
+                        </div>
+
+                        <div class="vehicle-form-grid">
+                            <div>
+                                <label class="form-label">Vehicle Type <span class="text-success">*</span></label>
+                                <select name="vehicle_type_vis" id="edit_vehicle_type_vis" class="form-control" required>
+                                    <option value="">Select vehicle type</option>
+                                    <option value="<?= PlateValidator::TYPE_PRIVATE ?>">Private Vehicle (Car/SUV/Van)</option>
+                                    <option value="<?= PlateValidator::TYPE_MOTORCYCLE ?>">Motorcycle/Tricycle</option>
+                                    <option value="<?= PlateValidator::TYPE_GOVERNMENT ?>">Government Vehicle</option>
+                                    <option value="<?= PlateValidator::TYPE_FOR_HIRE ?>">For-Hire Vehicle (Taxi/UV Express/Bus)</option>
+                                    <option value="<?= PlateValidator::TYPE_ELECTRIC ?>">Electric Vehicle</option>
+                                    <option value="<?= PlateValidator::TYPE_CONDUCTION ?>">Conduction Sticker (Temporary)</option>
+                                </select>
+                                <div class="form-text">Enables proper plate validation</div>
+                            </div>
+
+                            <div>
+                                <label class="form-label">Plate Number</label>
+                                <div style="position:relative;">
+                                    <input type="text" id="edit_plate_number" class="form-control" disabled style="padding-left:3.5rem;">
+                                    <div style="position:absolute;left:0;top:0;bottom:0;display:flex;align-items:center;padding-left:0.85rem;color:#6b7280;"><i class="bi bi-card-text"></i></div>
+                                </div>
+                                <div class="form-text">Format: <span id="plateExampleEdit">ABC1234</span></div>
+                            </div>
+
+                            <div>
+                                <label class="form-label">Vehicle Model</label>
+                                <input type="text" name="model" id="edit_model" class="form-control" placeholder="e.g., Toyota Corolla">
+                                <div class="form-text">Make and model of your vehicle</div>
+                            </div>
+                        </div>
+
+                        <!-- Owner Details -->
+                        <div style="border-bottom:1px solid #eef2f7;padding-bottom:0.75rem;margin-top:0.5rem;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+                            <div style="width:36px;height:36px;border-radius:8px;background:#ecfeff;display:flex;align-items:center;justify-content:center;color:#06b6d4;font-weight:700;"><i class="bi bi-person-circle"></i></div>
+                            <div style="flex:1">
+                                <div style="font-weight:800;color:#111;font-size:0.95rem;">OWNER DETAILS <small style="color:#6b7280;font-weight:700;margin-left:0.5rem;">Required</small></div>
+                            </div>
+                        </div>
+
+                        <div class="vehicle-form-grid">
+                            <div>
+                                <label class="form-label">Owner Name <span class="text-success">*</span></label>
+                                <input type="text" name="owner_name" id="edit_owner_name" class="form-control" placeholder="e.g., Juan Dela Cruz" required>
+                                <div class="form-text">Name will be used on receipts</div>
+                            </div>
+                            <div>
+                                <label class="form-label">Owner Phone <span class="text-success">*</span></label>
+                                <input type="text" name="owner_phone" id="edit_owner_phone" class="form-control" placeholder="09XXXXXXXXX" required>
+                                <div class="form-text">Philippine mobile number</div>
+                            </div>
+                            <div>
+                                <label class="form-label">Owner Email <span class="text-success">*</span></label>
+                                <input type="email" name="owner_email" id="edit_owner_email" class="form-control" placeholder="name@example.com" required>
+                                <div class="form-text">Receipt notifications sent here</div>
+                            </div>
+                        </div>
+
+                        <!-- Additional Details -->
+                        <div style="border-bottom:1px solid #eef2f7;padding-bottom:0.75rem;margin-top:0.5rem;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+                            <div style="width:36px;height:36px;border-radius:8px;background:#faf7ff;display:flex;align-items:center;justify-content:center;color:#7c3aed;font-weight:700;"><i class="bi bi-palette"></i></div>
+                            <div style="flex:1">
+                                <div style="font-weight:800;color:#111;font-size:0.95rem;">ADDITIONAL DETAILS <small style="color:#6b7280;font-weight:700;margin-left:0.5rem;">Optional</small></div>
+                            </div>
+                        </div>
+
+                        <div class="vehicle-form-grid">
+                            <div>
+                                <label class="form-label">Color</label>
+                                <select name="color" id="edit_color" class="form-control">
+                                    <option value="">Select color</option>
+                                    <option>White</option>
+                                    <option>Black</option>
+                                    <option>Silver</option>
+                                    <option>Blue</option>
+                                    <option>Red</option>
+                                    <option>Other</option>
+                                </select>
+                                <div class="form-text">Vehicle exterior color</div>
+                            </div>
+                            <div>
+                                <label class="form-label">Year</label>
+                                <input type="number" name="year" id="edit_year" class="form-control" placeholder="2026">
+                                <div class="form-text">Year of manufacture</div>
+                            </div>
+                            <div></div>
+                        </div>
+
+                        <div style="display:flex;gap:1rem;align-items:center;margin-top:0.5rem;">
+                            <button type="button" class="modal-btn-cancel" data-bs-dismiss="modal"><i class="bi bi-x-lg"></i> Cancel</button>
+                            <button type="submit" class="modal-btn-save"><i class="bi bi-check-lg"></i> Save Changes</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -1143,6 +1368,72 @@ document.addEventListener('DOMContentLoaded', function(){
             plateErrorAdd.textContent = '';
         }
     });
+
+    // Edit vehicle modal population
+    const editBtns = document.querySelectorAll('.edit-vehicle-btn');
+    const editModalEl = document.getElementById('editVehicleModal');
+    const editModal = editModalEl ? new bootstrap.Modal(editModalEl) : null;
+    editBtns.forEach(function(btn){
+        btn.addEventListener('click', function(){
+            const id = this.getAttribute('data-id');
+            const plate = this.getAttribute('data-plate') || '';
+            const model = this.getAttribute('data-model') || '';
+            const color = this.getAttribute('data-color') || '';
+            const vtype = this.getAttribute('data-vehicle_type') || '';
+            const ownerName = this.getAttribute('data-owner_name') || '';
+            const ownerPhone = this.getAttribute('data-owner_phone') || '';
+            const ownerEmail = this.getAttribute('data-owner_email') || '';
+
+            // If model contains year in parentheses, extract
+            let year = '';
+            let modelText = model;
+            const m = model.match(/^(.+?)\s*\((\d{4})\)$/);
+            if (m) { modelText = m[1].trim(); year = m[2]; }
+
+            document.getElementById('edit_vehicle_id').value = id;
+            document.getElementById('edit_plate_number').value = plate;
+            document.getElementById('edit_plate_number_hidden').value = plate;
+            document.getElementById('edit_vehicle_type').value = vtype;
+            // visible select
+            const visType = document.getElementById('edit_vehicle_type_vis');
+            if (visType) visType.value = vtype;
+            document.getElementById('edit_model').value = modelText;
+            document.getElementById('edit_color').value = color;
+            document.getElementById('edit_year').value = year;
+            // owner fields
+            const on = document.getElementById('edit_owner_name'); if (on) on.value = ownerName;
+            const op = document.getElementById('edit_owner_phone'); if (op) op.value = ownerPhone;
+            const oe = document.getElementById('edit_owner_email'); if (oe) oe.value = ownerEmail;
+
+            if (editModal) editModal.show();
+        });
+    });
+
+    // Validate edit form on submit
+    const editForm = document.getElementById('editVehicleForm');
+    if (editForm) {
+        editForm.addEventListener('submit', function(e){
+            let hasError = false;
+            let firstEl = null;
+            const modelField = document.getElementById('edit_model');
+            const yearField = document.getElementById('edit_year');
+            const colorField = document.getElementById('edit_color');
+            // model
+            const mErr = validateModel(modelField ? modelField.value : '');
+            if (mErr) { hasError = true; firstEl = modelField; alert(mErr); }
+            // year
+            if (!hasError) {
+                const yErr = validateYear(yearField ? yearField.value : '');
+                if (yErr) { hasError = true; firstEl = yearField; alert(yErr); }
+            }
+            // color
+            if (!hasError) {
+                const cErr = validateColor(colorField ? colorField.value : '');
+                if (cErr) { hasError = true; firstEl = colorField; alert(cErr); }
+            }
+            if (hasError) { e.preventDefault(); if (firstEl) firstEl.focus(); }
+        });
+    }
     
     const formAdd = document.getElementById('vehicleFormAdd');
     if (formAdd) {

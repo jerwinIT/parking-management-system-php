@@ -25,6 +25,11 @@ if (file_exists(BASE_PATH . '/config/email_config.php')) {
     require_once BASE_PATH . '/config/email_config.php';
 }
 
+// Booking helper functions
+if (file_exists(BASE_PATH . '/config/booking_helpers.php')) {
+    require_once BASE_PATH . '/config/booking_helpers.php';
+}
+
 // Application settings
 // Toggle whether email verification is required for new accounts.
 // You can override this by defining REQUIRE_EMAIL_VERIFICATION in config/email_config.php
@@ -142,6 +147,8 @@ function displayAlert() {
     $alert = getAlert();
     if ($alert) {
         echo '<script>
+        // mark that a server-side alert will be shown so pages can coordinate modal display
+        window.__hasServerAlert = true;
         document.addEventListener("DOMContentLoaded", function() {
             showAlert("' . addslashes(htmlspecialchars($alert['message'])) . '", "' . htmlspecialchars($alert['type']) . '");
         });

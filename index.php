@@ -25,9 +25,12 @@ $maintenance = (int) $pdo->query("SELECT COUNT(*) FROM parking_slots WHERE statu
 
 
 // Occupied slots = currently active bookings (status 'parked' or 'pending')
-$occupied = $pdo->query("SELECT COUNT(*) FROM bookings WHERE status IN ('parked', 'pending')")->fetchColumn();
+// Counts for new widget model
+$currently_parked = (int) $pdo->query("SELECT COUNT(*) FROM bookings WHERE status = 'parked'")->fetchColumn();
+$active_reservations = (int) $pdo->query("SELECT COUNT(*) FROM bookings WHERE status = 'pending'")->fetchColumn();
 
-// Available = total slots minus maintenance minus occupied
+// Preserve previous available calculation for other UI parts if needed
+$occupied = $pdo->query("SELECT COUNT(*) FROM bookings WHERE status IN ('parked', 'pending')")->fetchColumn();
 $available = $total_slots - $maintenance - $occupied;
 if ($available < 0) $available = 0;
 
@@ -58,7 +61,7 @@ if (isAdmin()) {
 // Slots for mini parking map (first 10 by row/col)
 $map_slots = [];
 if (!isAdmin()) {
-    $map_slots = $pdo->query('SELECT slot_number, status FROM parking_slots ORDER BY slot_row, slot_column LIMIT 10')->fetchAll();
+    $map_slots = $pdo->query('SELECT id, slot_number, status FROM parking_slots ORDER BY slot_row, slot_column LIMIT 10')->fetchAll();
 }
 
 require __DIR__ . '/includes/header.php';
@@ -153,6 +156,11 @@ require __DIR__ . '/includes/header.php';
     .stat-icon.total {
         background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
         color: #0c4a6e;
+    }
+
+    .stat-icon.reservations {
+        background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
+        color: #92400e;
     }
 
     .stat-label {
@@ -408,28 +416,7 @@ require __DIR__ . '/includes/header.php';
 </div>
 
 <div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-icon available">
-            <i class="bi bi-check-circle-fill"></i>
-        </div>
-        <div>
-            <div class="stat-label">Available</div>
-            <div class="stat-value"><?= (int) $available ?></div>
-            <div class="stat-desc">Ready to book</div>
-        </div>
-    </div>
-
-    <div class="stat-card">
-        <div class="stat-icon occupied">
-            <i class="bi bi-p-square-fill"></i>
-        </div>
-        <div>
-            <div class="stat-label">Occupied</div>
-            <div class="stat-value"><?= (int) $occupied ?></div>
-            <div class="stat-desc">Currently parked</div>
-        </div>
-    </div>
-
+    <!-- 1. Total Slots (blue) -->
     <div class="stat-card">
         <div class="stat-icon total">
             <i class="bi bi-grid-3x3"></i>
@@ -437,7 +424,31 @@ require __DIR__ . '/includes/header.php';
         <div>
             <div class="stat-label">Total Slots</div>
             <div class="stat-value"><?= $total_slots ?></div>
-            <div class="stat-desc">Parking spaces</div>
+            <div class="stat-desc">System capacity</div>
+        </div>
+    </div>
+
+    <!-- 2. Currently Parked (red) -->
+    <div class="stat-card">
+        <div class="stat-icon occupied">
+            <i class="bi bi-p-square-fill"></i>
+        </div>
+        <div>
+            <div class="stat-label">Currently Parked</div>
+            <div class="stat-value"><?= (int) $currently_parked ?></div>
+            <div class="stat-desc">Vehicles in lot</div>
+        </div>
+    </div>
+
+    <!-- 3. Active Reservations (orange) -->
+    <div class="stat-card">
+        <div class="stat-icon reservations">
+            <i class="bi bi-calendar-check-fill"></i>
+        </div>
+        <div>
+            <div class="stat-label">Active Reservations</div>
+            <div class="stat-value"><?= (int) $active_reservations ?></div>
+            <div class="stat-desc">Upcoming arrivals</div>
         </div>
     </div>
 </div>
@@ -509,7 +520,19 @@ require __DIR__ . '/includes/header.php';
                 <?php if (!empty($map_slots)): ?>
                     <div class="slot-map-grid">
                         <?php foreach ($map_slots as $s): ?>
-                            <div class="slot-mini slot-<?= $s['status'] === 'available' ? 'available' : 'occupied' ?>">
+                            <?php
+                                $miniClass = 'available';
+                                try {
+                                    if ($s['status'] === 'maintenance') {
+                                        $miniClass = 'occupied';
+                                    } else {
+                                        if (isSlotOccupiedNow($pdo, $s['id'])) $miniClass = 'occupied'; else $miniClass = 'available';
+                                    }
+                                } catch (Exception $e) {
+                                    $miniClass = ($s['status'] === 'available') ? 'available' : 'occupied';
+                                }
+                            ?>
+                            <div class="slot-mini slot-<?= $miniClass ?>">
                                 <?= htmlspecialchars($s['slot_number']) ?>
                             </div>
                         <?php endforeach; ?>
@@ -581,12 +604,12 @@ require __DIR__ . '/includes/header.php';
 
 <div class="admin-stats-grid mb-4">
     <div class="admin-stat-card">
-        <div class="stat-icon" style="background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); color: #16a34a;">
-            <i class="bi bi-check-circle-fill"></i>
+        <div class="stat-icon" style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #2563eb;">
+            <i class="bi bi-grid-3x3"></i>
         </div>
         <div class="stat-info">
-            <div class="stat-label">Available Slots</div>
-            <div class="stat-value" style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><?= (int) $available ?></div>
+            <div class="stat-label">Total Slots</div>
+            <div class="stat-value" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><?= $total_slots ?></div>
         </div>
     </div>
 
@@ -595,18 +618,18 @@ require __DIR__ . '/includes/header.php';
             <i class="bi bi-p-square-fill"></i>
         </div>
         <div class="stat-info">
-            <div class="stat-label">Occupied Slots</div>
-            <div class="stat-value" style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><?= (int) $occupied ?></div>
+            <div class="stat-label">Currently Parked</div>
+            <div class="stat-value" style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><?= (int) $currently_parked ?></div>
         </div>
     </div>
 
-     <div class="admin-stat-card">    
-        <div class="stat-icon" style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #2563eb;">
-            <i class="bi bi-grid-3x3"></i>
+    <div class="admin-stat-card">    
+        <div class="stat-icon" style="background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%); color: #92400e;">
+            <i class="bi bi-calendar-check-fill"></i>
         </div>
         <div class="stat-info">
-            <div class="stat-label">Total Slots</div>
-            <div class="stat-value" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><?= $total_slots ?></div>
+            <div class="stat-label">Active Reservations</div>
+            <div class="stat-value" style="background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><?= (int) $active_reservations ?></div>
         </div>
     </div>
 </div>
