@@ -135,7 +135,8 @@ try {
             background: linear-gradient(145deg, #dcfce7 0%, #f0fdf4 100%);
             border-radius: 18px;
             min-height: 430px;
-            max-width: 420px;
+            max-width: 520px;
+            width: 100%;
             margin-left: auto;
             margin-right: auto;
             display: flex;
@@ -143,10 +144,16 @@ try {
             justify-content: center;
             color: var(--primary);
             box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+            overflow: hidden;
         }
-        .hero-visual i {
-            font-size: 4rem;
-            opacity: .6;
+        .hero-visual img.hero-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        .hero-visual .hero-fallback {
+            font-size: 4rem; opacity: .6; display: none;
         }
         .stats-section { 
             background: linear-gradient(180deg, #f8fafc 0%, #eefdf4 100%); 
@@ -326,12 +333,30 @@ try {
                 </div>
                 <div class="col-lg-6">
                     <div class="hero-visual">
-                        <i class="bi bi-p-square"></i>
+                        <img class="hero-image" src="<?= BASE_URL ?>/assets/parking-img.jpg" alt="Parking lot" onerror="this.style.display='none'; var f=this.parentElement.querySelector('.hero-fallback'); if(f) f.style.display='block';">
+                        <i class="bi bi-p-square hero-fallback"></i>
                     </div>
                 </div>
             </div>
         </div>
     </section>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function(){
+        var img = document.querySelector('.hero-image');
+        if (!img) return;
+        img.addEventListener('error', function(){
+            try { console.warn('Hero image failed to load:', this.src); } catch(e){}
+            this.style.display = 'none';
+            var f = this.parentElement.querySelector('.hero-fallback');
+            if (f) f.style.display = 'block';
+        });
+        // If browser already marked it as complete but naturalWidth is zero, trigger error handling
+        if (img.complete && img.naturalWidth === 0) {
+            img.dispatchEvent(new Event('error'));
+        }
+    });
+    </script>
 
     <section class="stats-section">
         <div class="stats-wrap">

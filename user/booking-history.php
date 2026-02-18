@@ -370,7 +370,7 @@ require dirname(__DIR__) . '/includes/header.php';
                     <span class="booking-status <?= $status_class ?>"><?= ucfirst($b['status']) ?></span>
                 </div>
                 
-                <div class="booking-amount-col">$<?= htmlspecialchars($amount) ?></div>
+                <div class="booking-amount-col">&#8369;<?= htmlspecialchars($amount) ?></div>
                 
                 <div class="booking-actions-col">
                     <?php if ($b['status'] === 'parked'): ?>

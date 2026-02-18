@@ -259,17 +259,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,1..1000&display=swap" rel="stylesheet">
     <style>
-        body { min-height: 100vh; display: flex; align-items: center; background: linear-gradient(135deg, #15803d 0%, #16a34a 50%, #22c55e 100%); padding: 2rem 0; font-family: 'Google Sans Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-        .register-card { border-radius: 1rem; box-shadow: 0 1rem 3rem rgba(0,0,0,.15); }
+        body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(90deg, #ecfdf5 0%, #f0fdf4 50%, #f7fff9 100%); padding: 3rem 0; font-family: 'Google Sans Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .register-card { border-radius: 0.75rem; box-shadow: 0 12px 40px rgba(16,24,40,0.08); max-width: 480px; margin: 0 auto; overflow: hidden; }
         .btn-primary { background: #16a34a; border-color: #16a34a; }
         .btn-primary:hover { background: #22c55e; border-color: #22c55e; }
+        .card-body { padding: 2.25rem; }
         .password-requirements {
             font-size: 0.85rem;
             margin-top: 0.5rem;
             padding: 0.75rem;
-            background: #f9fafb;
-            border-radius: 0.5rem;
-            border: 1px solid #e5e7eb;
+            background: #ffffff; box-shadow: inset 0 0 0 1px rgba(14,165,233,0.02); border-radius: 0.5rem; border: 1px solid #eef2e7;
         }
         .password-requirements ul {
             margin: 0;
@@ -296,19 +295,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .is-valid {
             border-color: #16a34a !important;
         }
+        .brand-icon { width:64px; height:64px; background:#fff; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; box-shadow:0 8px 24px rgba(16,24,40,0.06); }
+        .muted-small { color:#6b7280; font-size:0.95rem; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="row justify-content-center">
-            <div class="col-md-6">
+            <div class="col-md-4">
                 <div class="card register-card">
-                    <div class="card-body p-5">
-                        <div class="text-center mb-4">
-                            <img src="<?= BASE_URL ?>/assets/parkit.png" alt="Parking Management System" style="max-height: 56px; width: auto;" onerror="this.style.display='none'; this.nextElementSibling.classList.remove('d-none');">
-                            <i class="bi bi-p-square-fill d-none text-success" style="font-size: 2.25rem;"></i>
-                            <h4 class="mt-2">Create Account</h4>
-                            <p class="text-muted">Register as a driver</p>
+                    <div class="card-body">
+                        <div class="text-center mb-3">
+                            <div class="brand-icon mx-auto mb-2">
+                                <img src="<?= BASE_URL ?>/assets/parkit.png" alt="P" style="max-height:36px;width:auto;" onerror="this.style.display='none'">
+                            </div>
+                            <h3 class="mt-1" style="font-weight:700;">Create Account</h3>
+                            <p class="muted-small">Join ParkIt and manage your parking</p>
                         </div>
                         <form method="post" action="<?= BASE_URL ?>/auth/register.php" id="registerForm">
                             <div class="row g-2">
@@ -331,11 +333,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </div>
                                 <div class="col-12 mb-2">
                                     <div class="row g-2">
-                                        <div class="col-md-6">
-                                                    <label class="form-label">Phone <span class="text-danger">*</span></label>
-                                                    <input type="tel" inputmode="tel" pattern="^(\+63|63|0)9[0-9]{9}$" name="phone" id="phone" class="form-control" value="<?= htmlspecialchars($_POST['phone'] ?? '') ?>" maxlength="14" placeholder="09XXXXXXXXX" required>
-                                                </div>
-                                        <div class="col-md-6">
+                                        <div class="col-6">
+                                            <label class="form-label">Phone <span class="text-danger">*</span></label>
+                                            <input type="tel" inputmode="tel" pattern="^(\+63|63|0)9[0-9]{9}$" name="phone" id="phone" class="form-control" value="<?= htmlspecialchars($_POST['phone'] ?? '') ?>" maxlength="14" placeholder="09XXXXXXXXX" required>
+                                        </div>
+                                        <div class="col-6">
                                             <label class="form-label">Username <span class="text-danger">*</span></label>
                                             <input type="text" name="username" id="username" class="form-control" value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_-]+">
                                         </div>
@@ -343,8 +345,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </div>
                             </div>
                             <div class="mb-2">
-                                <label class="form-label">Email <span class="text-danger">*</span></label>
-                                <input type="email" name="email" id="email" class="form-control" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required maxlength="255">
+                                <label class="form-label">Email Address <span class="text-danger">*</span></label>
+                                <input type="email" name="email" id="email" class="form-control" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required maxlength="255" placeholder="you@example.com">
                             </div>
                            
                             <div class="row g-2">
@@ -368,7 +370,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <div class="form-text-helper" id="passwordMatch"></div>
                                 </div>
                             </div>
-                            <button type="submit" class="btn btn-primary w-100 mt-3" id="submitBtn">Register</button>
+                            <div class="form-check mt-2 mb-3">
+                                <input class="form-check-input" type="checkbox" value="1" id="agreeTerms" required>
+                                <label class="form-check-label" for="agreeTerms">I agree to the <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a></label>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100 mt-1" id="submitBtn">Create Account</button>
+
+                            <div class="text-center mt-3">
+                                <div class="text-muted" style="font-size:.9rem;margin-bottom:.5rem;">Or</div>
+                                <div class="d-flex gap-2 justify-content-center">
+                                    <button type="button" class="btn" style="border:1px solid #e6f4ec;background:#fff;color:#0f5132;border-radius:8px;padding:.5rem 1.25rem;">Google</button>
+                                    <button type="button" class="btn" style="border:1px solid #e6f4ec;background:#fff;color:#0f1720;border-radius:8px;padding:.5rem 1.25rem;">GitHub</button>
+                                </div>
+                            </div>
                         </form>
                         <p class="text-center mt-3 mb-0">
                             <a href="<?= BASE_URL ?>/auth/login.php">Already have an account? Login</a>
